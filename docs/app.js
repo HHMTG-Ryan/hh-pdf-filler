@@ -1,26 +1,28 @@
 /* HH PDF Filler – client-side only
  * ---------------------------------------------------------------
- * - Reads record data from window.name (set by Zoho Function)
+ * - Reads record data from window.name (set by Zoho Function) or manual JSON
  * - Loads /docs/map.json for CRM→PDF field mapping
  * - Loads chosen template PDF from /docs/templates/<key>.pdf
- * - Fills AcroForm fields, then downloads the file
+ * - Fills AcroForm fields, keeps them EDITABLE, then downloads the file
  */
 
 const TEMPLATE_KEYS = [
+  // EDIT this list to match the PDFs in /docs/templates (filenames without .pdf)
+  "mcap_std",
+  "mcap_heloc",
+  "scotia_std",
+  "scotia_heloc",
+  "firstnat_std",
   "bridgewater_std",
   "cmls_std",
   "cwb_optimum_std",
-  "firstnat_std",
   "haventree_std",
   "lendwise_std",
-  "mcap_heloc",
-  "mcap_std",
   "private_std",
-  "scotia_heloc",
-  "scotia_std",
   "strive_std",
-  "td_heloc",
   "td_std",
+  "td_heloc",
+  "signing_package"
 ];
 
 const els = {
@@ -43,6 +45,7 @@ function toTitleCase(str) {
 }
 
 function loadTemplates() {
+  els.sel.innerHTML = "";
   TEMPLATE_KEYS.forEach(k => {
     const opt = document.createElement("option");
     opt.value = k;
@@ -95,16 +98,38 @@ function fmtDate(iso) {
 }
 
 /* ---------------------------------------------------------------
- * Fill the PDF fields
+ * Fill the PDF fields (keeps fields EDITABLE – no flatten)
  * -------------------------------------------------------------*/
 async function fillPdf(templateKey, record, map) {
   const pdfUrl = `./templates/${templateKey}.pdf`;
-  const pdfBytes = await (await fetch(pdfUrl, { cache: "no-store" })).arrayBuffer();
+
+  const res = await fetch(pdfUrl, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`Template fetch failed ${res.status} ${res.statusText} at ${pdfUrl}`);
+  }
+
+  const ct = (res.headers.get("content-type") || "").toLowerCase();
+  if (!ct.includes("pdf")) {
+    const text = await res.text();
+    throw new Error(`Expected PDF but got ${ct || "unknown"} from ${pdfUrl}. First 200 chars:\n` + text.slice(0, 200));
+  }
+
+  const pdfBytes = await res.arrayBuffer();
   const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
   const form = pdfDoc.getForm();
 
-  // console.log("PDF fields:", form.getFields().map(f => f.getName()));
+  // Best-effort: ensure fields are not read-only if template set them
+  try {
+    for (const f of form.getFields()) {
+      if (typeof f.enableReadOnly === "function") {
+        // pdf-lib uses setReadOnly/enableReadOnly in newer versions; fall through gracefully
+      }
+      if (typeof f.disableReadOnly === "function") f.disableReadOnly();
+      if (typeof f.setReadOnly === "function") f.setReadOnly(false);
+    }
+  } catch {}
 
+  // Apply mapping
   for (const [crmField, pdfField] of Object.entries(map)) {
     const v = normalize(record[crmField] ?? record[crmField.split(".").pop()]);
     try {
@@ -124,21 +149,31 @@ async function fillPdf(templateKey, record, map) {
         field.setText(v);
       }
     } catch (e) {
-      // console.warn(`Missing field in PDF: ${pdfField}`);
+      // Missing field in PDF—skip silently
     }
   }
 
-  form.flatten();
-  const outBytes = await pdfDoc.save();
+  // Keep fields editable; do NOT flatten.
+  // Improve appearances so filled values are visible in Acrobat/Preview/Chrome.
+  try {
+    const font = await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica);
+    form.updateFieldAppearances(font);
+  } catch {
+    // If embedding fails, most viewers still render text fine.
+  }
+
+  const outBytes = await pdfDoc.save({ updateFieldAppearances: false }); // retain AcroForm
   return new Blob([outBytes], { type: "application/pdf" });
 }
 
 /* ---------------------------------------------------------------
- * Optional helper: list all fields in current template
+ * List all fields in current template (for debugging)
  * -------------------------------------------------------------*/
 async function listPdfFields(templateKey) {
   const pdfUrl = `./templates/${templateKey}.pdf`;
-  const pdfBytes = await (await fetch(pdfUrl, { cache: "no-store" })).arrayBuffer();
+  const res = await fetch(pdfUrl, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Template fetch failed ${res.status} ${res.statusText} at ${pdfUrl}`);
+  const pdfBytes = await res.arrayBuffer();
   const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
   const form = pdfDoc.getForm();
   const names = form.getFields().map(f => f.getName());
@@ -146,7 +181,7 @@ async function listPdfFields(templateKey) {
 }
 
 /* ---------------------------------------------------------------
- * Main logic
+ * Main app
  * -------------------------------------------------------------*/
 async function run() {
   loadTemplates();
@@ -158,12 +193,12 @@ async function run() {
     setStatus("No Zoho payload detected. You can paste JSON below for testing.", "warn");
   }
 
-  // List-fields button
+  // Hook up list-fields button
   const listBtn = document.getElementById("listBtn");
   if (listBtn) {
     listBtn.addEventListener("click", async () => {
       try {
-        const templateKey = els.sel.value || "default";
+        const templateKey = els.sel.value || "mcap_std";
         setStatus(`Reading fields from ${templateKey}.pdf…`);
         const names = await listPdfFields(templateKey);
         els.fieldsBox.textContent = names.join("\n");
@@ -175,25 +210,26 @@ async function run() {
     });
   }
 
+  // Generate button
   els.btn.addEventListener("click", async () => {
     try {
-      const templateKey = els.sel.value || "default";
+      const templateKey = els.sel.value || "mcap_std";
       if (!TEMPLATE_KEYS.includes(templateKey)) throw new Error("Invalid template");
 
+      // Fallback to manual JSON if no Zoho payload
       if (!record) {
         if (!els.txt.value.trim()) throw new Error("No record data. Launch from Zoho or paste JSON.");
         record = JSON.parse(els.txt.value);
       }
 
-      // Format the key date fields before filling
-      const dateKeys = [
+      // Format key dates
+      [
         "Closing_Date",
         "COF_Date",
-        "Date_Of_Birth",
+        "Borrower1_DOB",
         "Contact_Date_of_Birth_2",
         "Maturity_Date"
-      ];
-      dateKeys.forEach(k => {
+      ].forEach(k => {
         if (record[k]) record[k] = fmtDate(record[k]);
       });
 
@@ -209,7 +245,7 @@ async function run() {
       a.remove();
       URL.revokeObjectURL(a.href);
 
-      setStatus("Done. Check your download.", "ok");
+      setStatus("Done. The PDF has editable fields.", "ok");
     } catch (err) {
       console.error(err);
       setStatus(`Error: ${err.message}`, "err");
