@@ -1,20 +1,20 @@
 {
-  "Contact_Name": "Borrower 1 Name",
-  "Email": "Borrower 1 Email",
-  "Mobile": "Borrower 1 Phone",
-  "Date_of_Birth": "Borrower 1 Birthdate",
+  "Contact_Name": "A1 Name",
+  "Email": "A1 Email",
+  "Mobile": "A1 Phone",
+  "Date_of_Birth": "A1 DOB",
 
-  "Contact_Full_Name_2": "Borrower 2 Name",
-  "Contact_Email_2": "Borrower 2 Email",
-  "Contact_Phone_2": "Borrower 2 Phone",
-  "Contact_Date_of_Birth_2": "Borrower 2 Birthdate",
+  "Contact_Full_Name_2": "A2 Name",
+  "Contact_Email_2": "A2 Email",
+  "Contact_Phone_2": "A2 Phone",
+  "Contact_Date_of_Birth_2": "A2 DOB",
 
-  "Street": "Street Address",
-  "City": "PropertyCity",
-  "Province": "PropertyProvince",  
+  "Street": "Property Address 1",
+  "City": "PropertCity",
+  "Province": "PropertyProvince",
   "Postal_Code": "PropertyPostalCode",
 
-  "Legal_Description_PID": "Legal Desc. (Lot/Plan/PID)",
+  "Legal_Description_PID": "Property Legal Description",
 
   "Lender_Mortgage_Number": "Mortgage Number",
   "Lender_Name": "Lender Name",
