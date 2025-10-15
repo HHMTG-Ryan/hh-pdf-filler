@@ -7,10 +7,20 @@
  */
 
 const TEMPLATE_KEYS = [
-  "default",
-  "scotia_std",
+  "bridgewater_std",
+  "cmls_std",
+  "cwb_optimum_std",
+  "firstnat_std",
+  "haventree_std",
+  "lendwise_std",
+  "mcap_heloc",
+  "mcap_std",
+  "private_std",
   "scotia_heloc",
-  "firstnat_std"
+  "scotia_std",
+  "strive_std",
+  "td_heloc",
+  "td_std",
 ];
 
 const els = {
