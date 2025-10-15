@@ -1,5 +1,29 @@
 {
+  "Contact_Name": "Borrower 1 Name",
+  "Email": "Borrower 1 Email",
+  "Mobile": "Borrower 1 Phone",
+  "Date_of_Birth": "Borrower 1 Birthdate",
+
+  "Contact_Full_Name_2": "Borrower 2 Name",
+  "Contact_Email_2": "Borrower 2 Email",
+  "Contact_Phone_2": "Borrower 2 Phone",
+  "Contact_Date_of_Birth_2": "Borrower 2 Birthdate",
+
+  "Street": "Street Address",
+  "City": "PropertyCity",
+  "Province": "PropertyProvince",  
+  "Postal_Code": "PropertyPostalCode",
+
+  "Legal_Description_PID": "Legal Desc. (Lot/Plan/PID)",
+
+  "Lender_Mortgage_Number": "Mortgage Number",
   "Lender_Name": "Lender Name",
-  "Borrower_First_Name": "First Name",
-  "Borrower_Last_Name": "Last Name"
+  "Total_Mortgage_Amount_incl_Insurance": "Mortgage Amount",
+
+  "Finders_Fee_BPS_NEW": "Basic BPS",
+  "Volume_Bonus_BPS_NEW": "Volume BPS",
+
+  "Closing_Date": "Completion Date",
+  "COF_Date": "Subject Removal Date",
+  "Lawyer": "Lawyer"
 }
