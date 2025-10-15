@@ -75,7 +75,7 @@
     <div id="status" class="row muted"></div>
     <div id="fieldsBox" class="row"></div>
 
-    <!-- Load pdf-lib BEFORE app.js (reliable global build) -->
+    <!-- Load pdf-lib BEFORE app.js (global build that exposes window.PDFLib) -->
     <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
     <script>
       if (typeof window.PDFLib === "undefined") {
