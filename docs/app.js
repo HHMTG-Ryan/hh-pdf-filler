@@ -36,11 +36,17 @@ function setStatus(msg, cls = "muted") {
   els.status.textContent = msg;
 }
 
+function toTitleCase(str) {
+  return str
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, ch => ch.toUpperCase());
+}
+
 function loadTemplates() {
   TEMPLATE_KEYS.forEach(k => {
     const opt = document.createElement("option");
     opt.value = k;
-    opt.textContent = k.replace(/_/g, " ").toUpperCase();
+    opt.textContent = toTitleCase(k);
     els.sel.appendChild(opt);
   });
 }
