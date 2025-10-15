@@ -3,10 +3,45 @@
   <head>
     <meta charset="utf-8" />
     <title>HH PDF Filler</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; }
+      h1 { font-size: 20px; margin-bottom: 12px; }
+      .row { margin: 12px 0; }
+      label { display:block; margin-bottom: 6px; font-weight: 600; }
+      select, textarea, button { width: 100%; max-width: 640px; padding: 10px; }
+      textarea { height: 140px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .muted { color:#666; font-size:12px; }
+      .ok { color: #057a55; }
+      .warn { color: #b58900; }
+      .err { color: #b00020; }
+    </style>
   </head>
   <body>
     <h1>HH PDF Filler</h1>
-    <p>If you can see this, GitHub Pages is set up.</p>
+
+    <div class="row">
+      <label for="template">Choose a package</label>
+      <select id="template"></select>
+      <div class="muted">Templates are served from <code>/docs/templates</code>. You can add more anytime.</div>
+    </div>
+
+    <div class="row">
+      <button id="fillBtn">Generate & Download PDF</button>
+    </div>
+
+    <div class="row">
+      <details>
+        <summary>Manual test mode (optional)</summary>
+        <div class="row muted">If you’re not launching from Zoho yet, paste a minimal JSON of record fields here.</div>
+        <textarea id="manualJson" placeholder='{"Deal_Name":"Smith Refi","Lender_Name":"Scotia","Borrower_First_Name":"Robin","Borrower_Last_Name":"Sully","Street":"258 Seymour St","City":"Kamloops","Province":"BC","Postal_Code":"V2C 2E5","Maturity_Date":"2027-06-01","Rate":"5.29"}'></textarea>
+      </details>
+    </div>
+
+    <div id="status" class="row muted"></div>
+
+    <!-- pdf-lib (fills AcroForms in-browser) -->
+    <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js" integrity="sha256-1d1r1m5wU3xgZ7tqz7FQ/T2N4ePfz0sE8L9KfSMo2eU=" crossorigin="anonymous"></script>
     <script src="./app.js"></script>
   </body>
 </html>
