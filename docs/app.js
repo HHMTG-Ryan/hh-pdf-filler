@@ -1,28 +1,15 @@
 /* HH PDF Filler – client-side only
  * ---------------------------------------------------------------
- * - Reads record data from window.name (set by Zoho Function) or manual JSON
+ * - Reads record data from ?data=<base64> (preferred) or window.name (legacy)
  * - Loads /docs/map.json for CRM→PDF field mapping
  * - Loads chosen template PDF from /docs/templates/<key>.pdf
  * - Fills AcroForm fields, keeps them EDITABLE, then downloads the file
  */
 
 const TEMPLATE_KEYS = [
-  // EDIT this list to match the PDFs in /docs/templates (filenames without .pdf)
-  "mcap_std",
-  "mcap_heloc",
-  "scotia_std",
-  "scotia_heloc",
-  "firstnat_std",
-  "bridgewater_std",
-  "cmls_std",
-  "cwb_optimum_std",
-  "haventree_std",
-  "lendwise_std",
-  "private_std",
-  "strive_std",
-  "td_std",
-  "td_heloc",
-  "signing_package"
+  "mcap_std","mcap_heloc","scotia_std","scotia_heloc","firstnat_std",
+  "bridgewater_std","cmls_std","cwb_optimum_std","haventree_std",
+  "lendwise_std","private_std","strive_std","td_std","td_heloc","signing_package"
 ];
 
 const els = {
@@ -39,9 +26,7 @@ function setStatus(msg, cls = "muted") {
 }
 
 function toTitleCase(str) {
-  return str
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, ch => ch.toUpperCase());
+  return str.replace(/_/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
 }
 
 function loadTemplates() {
@@ -54,16 +39,46 @@ function loadTemplates() {
   });
 }
 
+/* -------------------- Payload readers -------------------- */
+
+function b64urlToB64(s) {
+  // Convert base64url → base64
+  return s.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(s.length / 4) * 4, "=");
+}
+
+function tryParseJson(text) {
+  try { const o = JSON.parse(text); return o && typeof o === "object" ? o : null; }
+  catch { return null; }
+}
+
+function readPayloadFromQuery() {
+  try {
+    const params = new URLSearchParams(location.search);
+    const raw = params.get("data");
+    if (!raw) return null;
+    const decoded = atob(b64urlToB64(raw));
+    const obj = tryParseJson(decoded);
+    if (obj) {
+      // Strip ?data= from URL so refreshes don’t re-consume it.
+      try {
+        const url = new URL(location.href);
+        url.searchParams.delete("data");
+        history.replaceState({}, "", url);
+      } catch {}
+    }
+    return obj;
+  } catch { return null; }
+}
+
 function readPayloadFromWindowName() {
   try {
     if (!window.name) return null;
-    const decoded = atob(window.name);
-    const obj = JSON.parse(decoded);
-    return obj && typeof obj === "object" ? obj : null;
-  } catch (e) {
-    return null;
-  }
+    const decoded = atob(b64urlToB64(window.name));
+    return tryParseJson(decoded);
+  } catch { return null; }
 }
+
+/* -------------------- Fetch helpers -------------------- */
 
 async function fetchJson(url) {
   const r = await fetch(url, { cache: "no-store" });
@@ -83,30 +98,21 @@ function deriveFilename(templateKey, rec) {
   return `${templateKey}_${name}_${stamp}.pdf`;
 }
 
-/* ---------------------------------------------------------------
- * Pretty date formatter: 2025-10-15 → Oct 15, 2025
- * -------------------------------------------------------------*/
+/* -------------------- Formatting helpers -------------------- */
+
 function fmtDate(iso) {
   if (!iso) return "";
   const d = new Date(iso);
   if (isNaN(d)) return String(iso);
-  return d.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "2-digit"
-  });
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" });
 }
 
-/* ---------------------------------------------------------------
- * Fill the PDF fields (keeps fields EDITABLE – no flatten)
- * -------------------------------------------------------------*/
+/* -------------------- PDF fill -------------------- */
+
 async function fillPdf(templateKey, record, map) {
   const pdfUrl = `./templates/${templateKey}.pdf`;
-
   const res = await fetch(pdfUrl, { cache: "no-store" });
-  if (!res.ok) {
-    throw new Error(`Template fetch failed ${res.status} ${res.statusText} at ${pdfUrl}`);
-  }
+  if (!res.ok) throw new Error(`Template fetch failed ${res.status} ${res.statusText} at ${pdfUrl}`);
 
   const ct = (res.headers.get("content-type") || "").toLowerCase();
   if (!ct.includes("pdf")) {
@@ -118,12 +124,9 @@ async function fillPdf(templateKey, record, map) {
   const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
   const form = pdfDoc.getForm();
 
-  // Best-effort: ensure fields are not read-only if template set them
+  // Ensure fields are editable (best-effort)
   try {
     for (const f of form.getFields()) {
-      if (typeof f.enableReadOnly === "function") {
-        // pdf-lib uses setReadOnly/enableReadOnly in newer versions; fall through gracefully
-      }
       if (typeof f.disableReadOnly === "function") f.disableReadOnly();
       if (typeof f.setReadOnly === "function") f.setReadOnly(false);
     }
@@ -131,44 +134,39 @@ async function fillPdf(templateKey, record, map) {
 
   // Apply mapping
   for (const [crmField, pdfField] of Object.entries(map)) {
-    const v = normalize(record[crmField] ?? record[crmField.split(".").pop()]);
+    // allow map keys like "Module.Field" by falling back to last segment
+    const val = record[crmField];
+    const alt = record[crmField.split(".").pop()];
+    const v = normalize(val != null ? val : alt);
     try {
       const field = form.getField(pdfField);
       const type = field.constructor.name;
-
       if (type === "PDFTextField") {
         field.setText(v);
       } else if (type === "PDFDropdown") {
         try { field.select(v); } catch { field.setText(v); }
       } else if (type === "PDFCheckBox") {
-        const on = /^(yes|true|1|x)$/i.test(v);
-        on ? field.check() : field.uncheck();
+        /^(yes|true|1|x)$/i.test(v) ? field.check() : field.uncheck();
       } else if (type === "PDFRadioGroup") {
         try { field.select(v); } catch {}
       } else if (field.setText) {
         field.setText(v);
       }
-    } catch (e) {
-      // Missing field in PDF—skip silently
-    }
+    } catch { /* missing field in PDF – ignore */ }
   }
 
-  // Keep fields editable; do NOT flatten.
-  // Improve appearances so filled values are visible in Acrobat/Preview/Chrome.
+  // Improve appearances so filled values show in all viewers.
   try {
     const font = await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica);
     form.updateFieldAppearances(font);
-  } catch {
-    // If embedding fails, most viewers still render text fine.
-  }
+  } catch {}
 
-  const outBytes = await pdfDoc.save({ updateFieldAppearances: false }); // retain AcroForm
+  const outBytes = await pdfDoc.save({ updateFieldAppearances: false }); // keep AcroForm editable
   return new Blob([outBytes], { type: "application/pdf" });
 }
 
-/* ---------------------------------------------------------------
- * List all fields in current template (for debugging)
- * -------------------------------------------------------------*/
+/* -------------------- List fields (debug) -------------------- */
+
 async function listPdfFields(templateKey) {
   const pdfUrl = `./templates/${templateKey}.pdf`;
   const res = await fetch(pdfUrl, { cache: "no-store" });
@@ -176,24 +174,28 @@ async function listPdfFields(templateKey) {
   const pdfBytes = await res.arrayBuffer();
   const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
   const form = pdfDoc.getForm();
-  const names = form.getFields().map(f => f.getName());
-  return names.sort();
+  return form.getFields().map(f => f.getName()).sort();
 }
 
-/* ---------------------------------------------------------------
- * Main app
- * -------------------------------------------------------------*/
+/* -------------------- Main -------------------- */
+
 async function run() {
   loadTemplates();
-  let record = readPayloadFromWindowName();
 
+  // Prefer ?data=, fallback to window.name
+  let record = readPayloadFromQuery();
   if (record) {
-    setStatus("Record loaded from Zoho (secure window.name).", "ok");
+    setStatus("Record loaded from Zoho (?data=).", "ok");
   } else {
-    setStatus("No Zoho payload detected. You can paste JSON below for testing.", "warn");
+    record = readPayloadFromWindowName();
+    if (record) {
+      setStatus("Record loaded from Zoho (window.name).", "ok");
+    } else {
+      setStatus("No Zoho payload detected. Paste JSON below for testing.", "warn");
+    }
   }
 
-  // Hook up list-fields button
+  // List-fields button
   const listBtn = document.getElementById("listBtn");
   if (listBtn) {
     listBtn.addEventListener("click", async () => {
@@ -210,36 +212,32 @@ async function run() {
     });
   }
 
-  // Generate button
+  // Generate
   els.btn.addEventListener("click", async () => {
     try {
       const templateKey = els.sel.value || "mcap_std";
       if (!TEMPLATE_KEYS.includes(templateKey)) throw new Error("Invalid template");
 
       // Fallback to manual JSON if no Zoho payload
-      if (!record) {
+      let rec = record;
+      if (!rec) {
         if (!els.txt.value.trim()) throw new Error("No record data. Launch from Zoho or paste JSON.");
-        record = JSON.parse(els.txt.value);
+        rec = JSON.parse(els.txt.value);
       }
 
-      // Format key dates
+      // Format common dates (keep originals if invalid)
       [
-        "Closing_Date",
-        "COF_Date",
-        "Borrower1_DOB",
-        "Contact_Date_of_Birth_2",
-        "Maturity_Date"
-      ].forEach(k => {
-        if (record[k]) record[k] = fmtDate(record[k]);
-      });
+        "Closing_Date","COF_Date","Borrower1_DOB",
+        "Contact_Date_of_Birth_2","Maturity_Date","Date_of_Birth"
+      ].forEach(k => { if (rec[k]) rec[k] = fmtDate(rec[k]); });
 
       const map = await fetchJson("./map.json");
       setStatus("Generating PDF…", "muted");
 
-      const blob = await fillPdf(templateKey, record, map);
+      const blob = await fillPdf(templateKey, rec, map);
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = deriveFilename(templateKey, record);
+      a.download = deriveFilename(templateKey, rec);
       document.body.appendChild(a);
       a.click();
       a.remove();
