@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Redirecting…</title>
+<script>
+(async () => {
+  const id = new URLSearchParams(location.search).get("id");
+  if (!id) { document.body.innerText = "Missing id"; return; }
+  const url = "https://www.zohoapis.com/crm/v7/functions/hhfillerapp/actions/execute?auth_type=apikey&zapikey=YOURKEY&id=" + id;
+  const res = await fetch(url);
+  const json = await res.json();
+  const html = json?.details?.output;
+  if (html) document.write(html);
+  else document.body.innerText = "No HTML returned";
+})();
+</script>
+</head>
+<body>Loading…</body>
+</html>
