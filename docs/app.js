@@ -54,20 +54,29 @@ function tryParseJson(text) {
 function readPayloadFromQuery() {
   try {
     const params = new URLSearchParams(location.search);
-    const raw = params.get("data");
+    let raw = params.get("data");
     if (!raw) return null;
-    const decoded = atob(b64urlToB64(raw));
-    const obj = tryParseJson(decoded);
-    if (obj) {
-      // Strip ?data= from URL so refreshes don’t re-consume it.
-      try {
-        const url = new URL(location.href);
-        url.searchParams.delete("data");
-        history.replaceState({}, "", url);
-      } catch {}
-    }
+
+    // Step 1: decode URL encoding (handles %2F, %3D, etc.)
+    raw = decodeURIComponent(raw.trim());
+
+    // Step 2: convert Base64URL to Base64
+    const b64 = raw.replace(/-/g, "+").replace(/_/g, "/").replace(/\s/g, "+");
+
+    // Step 3: decode to JSON
+    const decoded = atob(b64);
+    const obj = JSON.parse(decoded);
+
+    // Step 4: clean the URL so refresh doesn't re-run it
+    const url = new URL(location.href);
+    url.searchParams.delete("data");
+    history.replaceState({}, "", url);
+
     return obj;
-  } catch { return null; }
+  } catch (e) {
+    console.error("Failed to parse ?data= payload", e);
+    return null;
+  }
 }
 
 function readPayloadFromWindowName() {
