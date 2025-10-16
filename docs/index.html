@@ -1,90 +1,61 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>HH PDF Filler</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta http-equiv="Cache-Control" content="no-store" />
-    <style>
-      :root { color-scheme: light dark; }
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; }
-      h1 { font-size: 20px; margin-bottom: 12px; }
-      .row { margin: 12px 0; }
-      label { display:block; margin-bottom: 6px; font-weight: 600; }
-      select, textarea, button { width: 100%; max-width: 720px; padding: 10px; }
-      textarea { height: 160px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-      .muted { color:#666; font-size:12px; }
-      .ok { color:#057a55; }
-      .warn { color:#b58900; }
-      .err { color:#b00020; }
-      #fieldsBox { white-space: pre; font-family: ui-monospace, Menlo, Consolas, monospace; }
-    </style>
-  </head>
-  <body>
-    <h1>HH PDF Filler</h1>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HH PDF Filler</title>
 
-    <div class="row">
-      <label for="template">Choose a package</label>
-      <select id="template"></select>
-      <div class="muted">
-        PDF templates are served from <code>/docs/templates</code>. Add or rename files there, then refresh.
-      </div>
-    </div>
+  <!-- pdf-lib -->
+  <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
 
-    <div class="row">
-      <button id="fillBtn">Generate &amp; Download PDF</button>
-    </div>
+  <style>
+    :root { --fg:#111; --muted:#777; --ok:#1a7f37; --err:#b00020; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+           color:var(--fg); margin:24px; max-width:920px; }
+    h1 { font-size:22px; margin:0 0 16px; }
+    .row { margin:10px 0; }
+    select, button, textarea { width:100%; padding:10px; font-size:14px; }
+    button { cursor:pointer; }
+    .muted { color:var(--muted); }
+    .ok { color:var(--ok); }
+    .warn { color:#946200; }
+    .err { color:var(--err); }
+    .small { font-size:12px; color:var(--muted); }
+    details { margin-top:8px; }
+    #fieldsBox { white-space:pre; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                 border:1px solid #ddd; padding:10px; min-height:120px; }
+  </style>
+</head>
+<body>
+  <h1>HH PDF Filler</h1>
 
-    <div class="row">
-      <button id="listBtn">List PDF Field Names</button>
-      <div class="muted">Use this to confirm exact field names inside the selected PDF.</div>
-    </div>
+  <div class="row">
+    <label for="template" class="small">Choose a package</label>
+    <select id="template"></select>
+    <div class="small">PDF templates are served from <code>./templates</code>. Add/rename files there, then refresh.</div>
+  </div>
 
-    <div class="row">
-      <details>
-        <summary>Manual test mode (optional)</summary>
-        <div class="row muted">If you’re not launching from Zoho yet, paste a minimal JSON record below.</div>
-        <textarea id="manualJson" placeholder='{
-  "Deal_Name":"Smith Refinance",
-  "Contact_Name":"John A. Smith",
-  "Email":"john.smith@email.com",
-  "Mobile":"250-555-0199",
-  "Date_of_Birth":"1985-04-22",
-  "Contact_Full_Name_2":"Jane B. Smith",
-  "Contact_Email_2":"jane@example.com",
-  "Contact_Phone_2":"250-555-0200",
-  "Contact_Date_of_Birth_2":"1987-07-19",
-  "Street":"258 Seymour Street",
-  "City":"Kamloops",
-  "Province":"BC",
-  "Postal_Code":"V2C 2E5",
-  "Legal_Description_PID":"Lot 12, Plan K12345, PID 002-456-789",
-  "Lender_Mortgage_Number":"987654321",
-  "Lender_Name":"MCAP",
-  "Total_Mortgage_Amount_incl_Insurance":"450000",
-  "Finders_Fee_BPS_NEW":"85",
-  "Volume_Bonus_BPS_NEW":"12.5",
-  "Closing_Date":"2025-11-13",
-  "COF_Date":"2025-10-20",
-  "Lawyer":"Wilson M. Beck Law Group",
-  "Maturity_Date":"2030-11-13"
-}'></textarea>
-      </details>
-    </div>
+  <div class="row">
+    <button id="fillBtn">Generate & Download PDF</button>
+  </div>
 
-    <div id="status" class="row muted"></div>
-    <div id="fieldsBox" class="row"></div>
+  <div class="row">
+    <button id="listBtn">List PDF Field Names</button>
+  </div>
 
-    <!-- Load pdf-lib BEFORE app.js (global build that exposes window.PDFLib) -->
-    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
-    <script>
-      if (typeof window.PDFLib === "undefined") {
-        document.body.innerHTML =
-          "<p style='color:red;font-weight:bold'>Error: pdf-lib failed to load. Check your internet connection or CDN URL.</p>";
-      }
-    </script>
+  <div id="status" class="row muted">Loading…</div>
 
-    <!-- Your application logic -->
-    <script src="./app.js"></script>
-  </body>
+  <details>
+    <summary><strong>Manual test mode (optional)</strong></summary>
+    <div class="small">Paste JSON for testing when launching locally or without Zoho.</div>
+    <textarea id="manualJson" rows="10" placeholder='{"Deal_Name":"Example","City":"Kamloops"}'></textarea>
+  </details>
+
+  <div class="row">
+    <div id="fieldsBox" class="small"></div>
+  </div>
+
+  <!-- Your app logic -->
+  <script src="./app.js"></script>
+</body>
 </html>
