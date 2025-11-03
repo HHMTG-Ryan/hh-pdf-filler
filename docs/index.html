@@ -1,61 +1,65 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>HH PDF Filler</title>
-
-  <!-- pdf-lib -->
-  <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
-
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>HH Signing Package Builder – Launch</title>
   <style>
-    :root { --fg:#111; --muted:#777; --ok:#1a7f37; --err:#b00020; }
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-           color:var(--fg); margin:24px; max-width:920px; }
-    h1 { font-size:22px; margin:0 0 16px; }
-    .row { margin:10px 0; }
-    select, button, textarea { width:100%; padding:10px; font-size:14px; }
-    button { cursor:pointer; }
-    .muted { color:var(--muted); }
-    .ok { color:var(--ok); }
-    .warn { color:#946200; }
-    .err { color:var(--err); }
-    .small { font-size:12px; color:var(--muted); }
-    details { margin-top:8px; }
-    #fieldsBox { white-space:pre; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-                 border:1px solid #ddd; padding:10px; min-height:120px; }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:900px}
+    h1{font-size:22px;margin:0 0 12px} .muted{color:#666}
+    textarea,button{width:100%;padding:10px;font-size:14px} button{cursor:pointer}
+    .row{margin:12px 0} .ok{color:#1a7f37} .err{color:#b00020}
   </style>
 </head>
 <body>
-  <h1>HH PDF Filler</h1>
+  <h1>HH Signing Package Builder – Launch</h1>
+  <div id="status" class="muted">Checking for Zoho payload…</div>
 
-  <div class="row">
-    <label for="template" class="small">Choose a package</label>
-    <select id="template"></select>
-    <div class="small">PDF templates are served from <code>./templates</code>. Add/rename files there, then refresh.</div>
+  <div class="row" id="manual" style="display:none">
+    <p class="muted">No Zoho payload detected. Paste JSON below to test, then click Launch.</p>
+    <textarea id="manualJson" rows="8" placeholder='{"Contact_Name":"Ryan Smith","Lender_Name":"TD","City":"Kamloops"}'></textarea>
+    <div class="row"><button id="launchBtn">Launch App</button></div>
   </div>
 
-  <div class="row">
-    <button id="fillBtn">Generate & Download PDF</button>
-  </div>
+<script>
+function setStatus(t,cls){ const s=document.getElementById('status'); s.textContent=t; s.className=cls||'muted'; }
+function b64url(s){ return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function b64urlToB64(s){ return s.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(s.length/4)*4,'='); }
+function tryJSON(t){ try{ const o=JSON.parse(t); return o&&typeof o==='object'?o:null; }catch{return null;} }
 
-  <div class="row">
-    <button id="listBtn">List PDF Field Names</button>
-  </div>
+(function(){
+  // 1) If ?data already present, forward to app.html unchanged
+  const params = new URLSearchParams(location.search);
+  const qData = params.get('data');
+  if(qData){
+    location.replace('app.html?data=' + encodeURIComponent(qData));
+    return;
+  }
 
-  <div id="status" class="row muted">Loading…</div>
+  // 2) If window.name contains base64 JSON, convert to url-safe and forward
+  try{
+    if(window.name){
+      const raw = atob(window.name.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(window.name.length/4)*4,'='));
+      const obj = tryJSON(raw);
+      if(obj){
+        const dataParam = b64url(JSON.stringify(obj));
+        location.replace('app.html?data=' + encodeURIComponent(dataParam));
+        return;
+      }
+    }
+  }catch{}
 
-  <details>
-    <summary><strong>Manual test mode (optional)</strong></summary>
-    <div class="small">Paste JSON for testing when launching locally or without Zoho.</div>
-    <textarea id="manualJson" rows="10" placeholder='{"Deal_Name":"Example","City":"Kamloops"}'></textarea>
-  </details>
-
-  <div class="row">
-    <div id="fieldsBox" class="small"></div>
-  </div>
-
-  <!-- Your app logic -->
-  <script src="./app.js"></script>
+  // 3) Manual mode for testing
+  setStatus('No payload found. Use manual JSON to launch.', 'err');
+  document.getElementById('manual').style.display = 'block';
+  document.getElementById('launchBtn').addEventListener('click', ()=>{
+    const t = document.getElementById('manualJson').value.trim();
+    const obj = tryJSON(t);
+    if(!obj){ alert('Invalid JSON'); return; }
+    const dataParam = b64url(JSON.stringify(obj));
+    location.replace('app.html?data=' + encodeURIComponent(dataParam));
+  });
+})();
+</script>
 </body>
 </html>
