@@ -1,0 +1,38 @@
+{
+  "key": "standard_pkg",
+  "label": "Standard – All Lenders",
+  "headers_pdf": "Headers_Signing_Package.pdf",
+  "headers_order": [
+    "WMB",
+    "MPP_OR_PROSPR",
+    "COMMITMENT",
+    "COB",
+    "FORM10",
+    "APPLICATION"
+  ],
+  "sequence": [
+    { "header": "WMB",            "doc": "WMB_Template.pdf" },
+
+    { "header": "MPP_OR_PROSPR",  "doc_if_upload": "UPLOAD_MPP.pdf", "doc_if_missing": "Prospr_Template.pdf" },
+
+    { "header": "COMMITMENT",     "doc": "UPLOAD_Commitment.pdf" },
+
+    { "no_header": true,          "doc": "LENDER_PAD.pdf",                 "optional": true },
+    { "no_header": true,          "doc": "UPLOAD_APA_TD.pdf",              "optional": true, "condition": "lender_has_TD" },
+    { "no_header": true,          "doc": "LENDER_Broker_Consent.pdf",      "optional": true },
+
+    { "header": "COB",            "doc": "COB_Template.pdf" },
+    { "header": "COB",            "doc": "COB_HELOC_Template.pdf",         "condition": "package_is_HELOC" },
+
+    { "header": "FORM10",         "doc": "FORM10_Template.pdf",            "condition": "package_is_STANDARD" },
+    { "header": "FORM10",         "doc": "FORM10_HELOC_Template.pdf",      "condition": "package_is_HELOC" },
+
+    { "header": "APPLICATION",    "doc": "UPLOAD_Application.pdf" }
+  ],
+  "editable_singles": [
+    { "label": "Identification Verification", "doc": "KYC_IDV_Template.pdf" },
+    { "label": "FCT Authorization",            "doc": "LENDER_FCT_Auth.pdf",   "optional": true },
+    { "label": "Gift Letter",                  "doc": "LENDER_Gift_Letter.pdf","optional": true }
+  ],
+  "prospr_fallback": "Prospr_Template.pdf"
+}
