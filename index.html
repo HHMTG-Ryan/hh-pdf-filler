@@ -4,15 +4,17 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>HH Signing Package Builder – Launch</title>
+  <link rel="icon" href="assets/images/hh-logo.png">
   <style>
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:900px}
     h1{font-size:22px;margin:0 0 12px} .muted{color:#666}
     textarea,button{width:100%;padding:10px;font-size:14px} button{cursor:pointer}
-    .row{margin:12px 0} .ok{color:#1a7f37} .err{color:#b00020}
+    .row{margin:12px 0} .ok{color:#1a7f37} .err{color:#b00020} .warn{color:#946200}
   </style>
 </head>
 <body>
   <h1>HH Signing Package Builder – Launch</h1>
+  <noscript><div class="row err">JavaScript is required to launch the app.</div></noscript>
   <div id="status" class="muted">Checking for Zoho payload…</div>
 
   <div class="row" id="manual" style="display:none">
@@ -24,11 +26,10 @@
 <script>
 function setStatus(t,cls){ const s=document.getElementById('status'); s.textContent=t; s.className=cls||'muted'; }
 function b64url(s){ return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
-function b64urlToB64(s){ return s.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(s.length/4)*4,'='); }
 function tryJSON(t){ try{ const o=JSON.parse(t); return o&&typeof o==='object'?o:null; }catch{return null;} }
 
 (function(){
-  // 1) If ?data already present, forward to app.html unchanged
+  // 1) If ?data present, forward to app/ (relative, no leading slash)
   const params = new URLSearchParams(location.search);
   const qData = params.get('data');
   if(qData){
@@ -43,7 +44,7 @@ function tryJSON(t){ try{ const o=JSON.parse(t); return o&&typeof o==='object'?o
       const obj = tryJSON(raw);
       if(obj){
         const dataParam = b64url(JSON.stringify(obj));
-        location.replace('app.html?data=' + encodeURIComponent(dataParam));
+        location.replace('app/?data=' + encodeURIComponent(dataParam));
         return;
       }
     }
@@ -57,7 +58,7 @@ function tryJSON(t){ try{ const o=JSON.parse(t); return o&&typeof o==='object'?o
     const obj = tryJSON(t);
     if(!obj){ alert('Invalid JSON'); return; }
     const dataParam = b64url(JSON.stringify(obj));
-    location.replace('app.html?data=' + encodeURIComponent(dataParam));
+    location.replace('app/?data=' + encodeURIComponent(dataParam));
   });
 })();
 </script>
