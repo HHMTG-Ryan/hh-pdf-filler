@@ -1,7 +1,7 @@
 {
   "key": "standard_pkg",
   "label": "Standard – All Lenders",
-  "headers_pdf": "Headers_Signing_Package.pdf",
+  "headers_pdf": "Headers_Signing_Pkg.pdf",
   "headers_order": [
     "WMB",
     "MPP_OR_PROSPR",
