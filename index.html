@@ -32,7 +32,7 @@ function tryJSON(t){ try{ const o=JSON.parse(t); return o&&typeof o==='object'?o
   const params = new URLSearchParams(location.search);
   const qData = params.get('data');
   if(qData){
-    location.replace('app.html?data=' + encodeURIComponent(qData));
+    location.replace('app/?data=' + encodeURIComponent(qData));
     return;
   }
 
