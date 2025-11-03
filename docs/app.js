@@ -1,4 +1,4 @@
-/* HH Signing Package Builder – Client-only
+/* HH Signing Package Builder – Client-only (fixed lender dropdown)
  * - Reads payload from ?data= (base64/url-safe) or window.name
  * - Uses packages/standard_pkg.json for order & rules
  * - Fetches templates from ./templates
@@ -24,6 +24,9 @@ const els = {
 };
 
 function setStatus(msg, cls="muted"){ els.status.className = cls; els.status.textContent = msg; }
+
+// ---------- Constants (declare ONCE) ----------
+const LENDER_OPTIONS = ["TD","MCAP","CMLS","CWB","FirstNat","Haventree","Lendwise","Scotia","Strive","Bridgewater","Private"];
 
 // ---------- Payload readers ----------
 function b64urlToB64(s){
@@ -137,7 +140,6 @@ async function downloadZip(namedBytes){
 async function makeInfoCoverPdf(record){
   const doc = await PDFLib.PDFDocument.create();
   const page = doc.addPage([595, 842]);
-  const { width } = page.getSize();
   const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
   const fontB = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
   let y = 800;
@@ -158,8 +160,13 @@ async function makeInfoCoverPdf(record){
   return new Blob([bytes], { type:"application/pdf" });
 }
 
-// ---------- Lender file resolver ----------
+// ---------- Lender helper ----------
 function lenderFile(prefix, suffix){ return `${prefix}_${suffix}`.replace(/\.pdf$/i,'') + ".pdf"; }
+function populateLenderOptions(selected){
+  els.lender.innerHTML = LENDER_OPTIONS
+    .map(v => `<option value="${v}" ${v===selected?"selected":""}>${v}</option>`)
+    .join("");
+}
 
 // ---------- Main run ----------
 (async function run(){
@@ -167,16 +174,14 @@ function lenderFile(prefix, suffix){ return `${prefix}_${suffix}`.replace(/\.pdf
 
   // 1) payload
   let record = readFromQuery() || readFromWindowName();
-  if(!record && els.manualJson.value.trim()){ record = tryJSON(els.manualJson.value.trim()); }
-  if(!record){ setStatus("No Zoho payload detected. Paste JSON or relaunch from CRM.", "warn"); }
+  if(!record && els.manualJson.value?.trim()){ record = tryJSON(els.manualJson.value.trim()); }
 
   // 2) package manifest
   const manifest = await fetchJson("./packages/standard_pkg.json");
 
-  // 3) lender detection and dropdown
+  // 3) lender detection + dropdown (single declaration, no duplicates)
   const detectedPrefix = inferLenderPrefix(record?.Lender_Name || "");
-  const lenderOptions = ["TD","MCAP","CMLS","CWB","FirstNat","Haventree","Lendwise","Scotia","Strive","Bridgewater","Private"];
-  els.lender.innerHTML = lenderOptions.map(v => `<option value="${v}" ${v===detectedPrefix?"selected":""}>${v}</option>`).join("");
+  populateLenderOptions(detectedPrefix || "TD");
 
   // TD APA visibility
   function refreshAPA(){ els.apaWrap.style.display = isTD(els.lender.value) ? "block":"none"; }
@@ -187,13 +192,13 @@ function lenderFile(prefix, suffix){ return `${prefix}_${suffix}`.replace(/\.pdf
   let map = {};
   try{ map = await fetchJson("./map.json"); }catch{ map = {}; }
 
-  // Header index mapping (1..6 by your confirmation)
+  // Header index mapping (1..6)
   const headerIndex = { WMB:1, MPP_OR_PROSPR:2, COMMITMENT:3, COB:4, FORM10:5, APPLICATION:6 };
 
   // Buttons
   els.btnPkg.addEventListener("click", async ()=>{
     try{
-      if(!record && !els.manualJson.value.trim()){ throw new Error("No record payload. Paste JSON or relaunch from CRM."); }
+      if(!record && !els.manualJson.value?.trim()){ throw new Error("No record payload. Paste JSON or relaunch from CRM."); }
       if(!els.upCommitment.files[0]) throw new Error("Commitment is required.");
       if(!els.upApplication.files[0]) throw new Error("Mortgage Application is required.");
 
@@ -215,7 +220,6 @@ function lenderFile(prefix, suffix){ return `${prefix}_${suffix}`.replace(/\.pdf
         const hb = await makeHeaderPageBytes(headersPath, idx);
         toMerge.push(hb);
       }
-
       async function pushStatic(path){ toMerge.push(await fetchPdfBytes(path)); }
       async function pushBytes(bytes){ toMerge.push(bytes); }
 
@@ -276,7 +280,7 @@ function lenderFile(prefix, suffix){ return `${prefix}_${suffix}`.replace(/\.pdf
 
   els.btnSingles.addEventListener("click", async ()=>{
     try{
-      if(!record && !els.manualJson.value.trim()){ throw new Error("No record payload. Paste JSON or relaunch from CRM."); }
+      if(!record && !els.manualJson.value?.trim()){ throw new Error("No record payload. Paste JSON or relaunch from CRM."); }
       setStatus("Generating editable singles…","muted");
 
       const lenderPrefix = els.lender.value;
@@ -322,7 +326,7 @@ function lenderFile(prefix, suffix){ return `${prefix}_${suffix}`.replace(/\.pdf
 
   els.btnInfo.addEventListener("click", async ()=>{
     try{
-      if(!record && !els.manualJson.value.trim()){ throw new Error("No record payload. Paste JSON or relaunch from CRM."); }
+      if(!record && !els.manualJson.value?.trim()){ throw new Error("No record payload. Paste JSON or relaunch from CRM."); }
       setStatus("Generating info cover page…","muted");
       const rec = record || tryJSON(els.manualJson.value.trim()) || {};
       const blob = await makeInfoCoverPdf(rec);
@@ -339,12 +343,10 @@ function lenderFile(prefix, suffix){ return `${prefix}_${suffix}`.replace(/\.pdf
   });
 
   // Initial status
-  const ln = record?.Lender_Name || "";
-  const auto = inferLenderPrefix(ln);
-  const lenderOptions = ["TD","MCAP","CMLS","CWB","FirstNat","Haventree","Lendwise","Scotia","Strive","Bridgewater","Private"];
-  els.lender.innerHTML = lenderOptions.map(v => `<option value="${v}" ${v===auto?"selected":""}>${v}</option>`).join("");
+  const auto = inferLenderPrefix(record?.Lender_Name || "");
+  populateLenderOptions(auto || "TD");
   function refreshAPA(){ els.apaWrap.style.display = isTD(els.lender.value) ? "block":"none"; }
   refreshAPA();
 
-  setStatus(record ? `Payload OK. Lender ≈ ${auto}. Choose options and upload files.` : "Paste JSON or launch from CRM.", record ? "ok" : "warn");
+  setStatus(record ? `Payload OK. Lender ≈ ${auto || "TD"}. Choose options and upload files.` : "Paste JSON or launch from CRM.", record ? "ok" : "warn");
 })();
