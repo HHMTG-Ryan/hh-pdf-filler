@@ -53,24 +53,63 @@ const HEADER_INDEX = {
 };
 
 //////////////////////////
-// Payload readers
+// Payload readers (UTF-8 safe)
 //////////////////////////
 function b64urlToB64(s) {
   const n = s.replace(/-/g, "+").replace(/_/g, "/").replace(/\s/g, "+");
   return n.padEnd(Math.ceil(n.length / 4) * 4, "=");
 }
-function tryJSON(t) { try { const o = JSON.parse(t); return (o && typeof o === "object") ? o : null; } catch { return null; } }
+
+// Decode Base64URL to a UTF-8 string.
+// Works with payloads encoded via: btoa(unescape(encodeURIComponent(json)))
+function atobUtf8(b64) {
+  const bin = atob(b64);
+  try {
+    // Convert binary string back to UTF-8
+    return decodeURIComponent(escape(bin));
+  } catch {
+    // If it wasn't UTF-8-escaped, fall back to raw (ASCII/Latin1) string
+    return bin;
+  }
+}
+
+function decodeB64UrlJson(raw) {
+  try {
+    const s = atobUtf8(b64urlToB64(raw.trim()));
+    const obj = JSON.parse(s);
+    return (obj && typeof obj === "object") ? obj : null;
+  } catch {
+    return null;
+  }
+}
+
+function tryJSON(t) {
+  try {
+    const o = JSON.parse(t);
+    return (o && typeof o === "object") ? o : null;
+  } catch {
+    return null;
+  }
+}
+
 function readFromQuery() {
   try {
     const p = new URLSearchParams(location.search);
-    let raw = p.get("data");
+    const raw = p.get("data");
     if (!raw) return null;
-    raw = decodeURIComponent(raw.trim());
-    return tryJSON(atob(b64urlToB64(raw)));
-  } catch { return null; }
+    return decodeB64UrlJson(decodeURIComponent(raw));
+  } catch {
+    return null;
+  }
 }
+
 function readFromWindowName() {
-  try { if (!window.name) return null; return tryJSON(atob(b64urlToB64(window.name))); } catch { return null; }
+  try {
+    if (!window.name) return null;
+    return decodeB64UrlJson(window.name);
+  } catch {
+    return null;
+  }
 }
 
 //////////////////////////
@@ -272,7 +311,7 @@ async function makeInfoCoverPdf(record) {
       const pkgType = (els.pkg.value || "Standard").toLowerCase();
       const headersPath = `${TEMPL_BASE}${manifest.headers_pdf}`;
 
-      // Upload bytes (FIX: upAPABytes typo)
+      // Upload bytes
       const upCommitmentBytes = await els.upCommitment.files[0].arrayBuffer();
       const upApplicationBytes = await els.upApplication.files[0].arrayBuffer();
       const upMPPBytes = els.upMPP?.files[0] ? await els.upMPP.files[0].arrayBuffer() : null;
