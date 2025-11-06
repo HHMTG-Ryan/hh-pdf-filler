@@ -3,64 +3,70 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>HH Signing Package Builder – Launch</title>
-  <link rel="icon" href="assets/images/hh-logo.png">
+  <title>Launch – HH Signing Package Builder</title>
   <style>
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:900px}
-    h1{font-size:22px;margin:0 0 12px} .muted{color:#666}
-    textarea,button{width:100%;padding:10px;font-size:14px} button{cursor:pointer}
-    .row{margin:12px 0} .ok{color:#1a7f37} .err{color:#b00020} .warn{color:#946200}
+    h1{margin:0 0 12px;font-size:22px}
+    .row{margin:12px 0}
+    textarea{width:100%;height:160px;padding:10px;font-size:14px}
+    button{padding:10px 14px;border:1px solid #ddd;border-radius:8px;background:#0a7cff;color:#fff;cursor:pointer}
+    .muted{color:#666;font-size:12px}
   </style>
 </head>
 <body>
-  <h1>HH Signing Package Builder – Launch</h1>
-  <noscript><div class="row err">JavaScript is required to launch the app.</div></noscript>
-  <div id="status" class="muted">Checking for Zoho payload…</div>
+  <h1>Launch HH Signing Package Builder</h1>
+  <p class="muted">Optional: paste JSON payload. Leave blank to use the app’s Manual JSON box.</p>
 
-  <div class="row" id="manual" style="display:none">
-    <p class="muted">No Zoho payload detected. Paste JSON below to test, then click Launch.</p>
-    <textarea id="manualJson" rows="8" placeholder='{"Contact_Name":"Ryan Smith","Lender_Name":"TD","City":"Kamloops"}'></textarea>
-    <div class="row"><button id="launchBtn">Launch App</button></div>
+  <div class="row">
+    <textarea id="payload" placeholder='{"Contact_Name":"Ryan Smith","Lender_Name":"TD","City":"Kamloops"}'></textarea>
+  </div>
+  <div class="row">
+    <button id="launch">🚀 Launch App</button>
   </div>
 
-<script>
-function setStatus(t,cls){ const s=document.getElementById('status'); s.textContent=t; s.className=cls||'muted'; }
-function b64url(s){ return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
-function tryJSON(t){ try{ const o=JSON.parse(t); return o&&typeof o==='object'?o:null; }catch{return null;} }
+  <script>
+    // Repo-aware base
+    const parts = location.pathname.split('/').filter(Boolean);
+    const REPO_BASE = parts.length ? `/${parts[0]}/` : '/';
+    const APP_URL = `${REPO_BASE}index.html`;
 
-(function(){
-  // 1) If ?data present, forward to app/ (relative, no leading slash)
-  const params = new URLSearchParams(location.search);
-  const qData = params.get('data');
-  if(qData){
-    location.replace('app/?data=' + encodeURIComponent(qData));
-    return;
-  }
-
-  // 2) If window.name contains base64 JSON, convert to url-safe and forward
-  try{
-    if(window.name){
-      const raw = atob(window.name.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(window.name.length/4)*4,'='));
-      const obj = tryJSON(raw);
-      if(obj){
-        const dataParam = b64url(JSON.stringify(obj));
-        location.replace('app/?data=' + encodeURIComponent(dataParam));
-        return;
-      }
+    // Normalize “smart” punctuation to ASCII (prevents stray Unicode)
+    function normalizeAscii(s){
+      return s
+        // dashes: hyphen-minus
+        .replace(/[\u2010-\u2015\u2212]/g, "-")
+        // quotes
+        .replace(/[\u2018\u2019\u2032]/g, "'")
+        .replace(/[\u201C\u201D\u2033]/g, '"')
+        // spaces
+        .replace(/\u00A0/g, " ");
     }
-  }catch{}
 
-  // 3) Manual mode for testing
-  setStatus('No payload found. Use manual JSON to launch.', 'err');
-  document.getElementById('manual').style.display = 'block';
-  document.getElementById('launchBtn').addEventListener('click', ()=>{
-    const t = document.getElementById('manualJson').value.trim();
-    const obj = tryJSON(t);
-    if(!obj){ alert('Invalid JSON'); return; }
-    const dataParam = b64url(JSON.stringify(obj));
-    location.replace('app/?data=' + encodeURIComponent(dataParam));
-  });
-})();
-</script>
+    // UTF-8 safe Base64URL encoder using TextEncoder
+    function b64urlFromString(s){
+      const bytes = new TextEncoder().encode(s);
+      let bin = "";
+      for (let i=0;i<bytes.length;i++) bin += String.fromCharCode(bytes[i]);
+      return btoa(bin).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+    }
+
+    function encodePayload(obj){
+      const json = JSON.stringify(obj);
+      return b64urlFromString(normalizeAscii(json));
+    }
+
+    document.getElementById('launch').addEventListener('click', () => {
+      const raw = document.getElementById('payload').value.trim();
+      let url = APP_URL;
+      if (raw) {
+        let obj;
+        try { obj = JSON.parse(raw); }
+        catch { alert('Manual payload is not valid JSON.'); return; }
+        const enc = encodePayload(obj);   // <-- FIXED (UTF-8 + normalization)
+        url += `?data=${enc}`;
+      }
+      location.href = url;
+    });
+  </script>
 </body>
 </html>
