@@ -1,72 +1,73 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Launch – HH Signing Package Builder</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HH Lender Docs Filler</title>
+  <meta name="description" content="Fill and merge lender PDFs directly in your browser – 100% client-side." />
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:900px}
-    h1{margin:0 0 12px;font-size:22px}
-    .row{margin:12px 0}
-    textarea{width:100%;height:160px;padding:10px;font-size:14px}
-    button{padding:10px 14px;border:1px solid #ddd;border-radius:8px;background:#0a7cff;color:#fff;cursor:pointer}
-    .muted{color:#666;font-size:12px}
+    :root {
+      --bg:#f7fafc; --panel:#ffffff; --text:#1a2a33; --muted:#5b7288; --ok:#0e8346; --err:#c62828;
+    }
+    body { background:var(--bg); color:var(--text); font-family:-apple-system,system-ui,Segoe UI,Roboto,Arial,sans-serif; margin:0; padding:24px; }
+    main { background:var(--panel); border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,0.08); max-width:860px; margin:auto; padding:24px; }
+    h1 { font-size:22px; margin:0 0 16px; }
+    label { display:block; margin-top:12px; font-weight:600; }
+    input,select,textarea,button { font:inherit; margin-top:4px; }
+    input[type=file], select, textarea { width:100%; }
+    button { background:#0a7cff; color:#fff; border:none; border-radius:8px; padding:10px 16px; margin-top:16px; cursor:pointer; }
+    .muted { color:var(--muted); }
+    .ok { color:var(--ok); }
+    .err { color:var(--err); }
   </style>
 </head>
 <body>
-  <h1>Launch HH Signing Package Builder</h1>
-  <p class="muted">Optional: paste JSON payload. Leave blank to use the app’s Manual JSON box.</p>
+  <main>
+    <h1>HH Lender Docs Filler</h1>
+    <p id="status" class="muted">Loading payload…</p>
 
-  <div class="row">
-    <textarea id="payload" placeholder='{"Contact_Name":"Ryan Smith","Lender_Name":"TD","City":"Kamloops"}'></textarea>
-  </div>
-  <div class="row">
-    <button id="launch">🚀 Launch App</button>
-  </div>
+    <label>Lender</label>
+    <select id="lender"></select>
 
+    <label>Package Type</label>
+    <select id="pkg">
+      <option value="Standard">Standard</option>
+      <option value="HELOC">HELOC</option>
+    </select>
+
+    <label>Upload Commitment (required)</label>
+    <input type="file" id="upCommitment" accept="application/pdf">
+
+    <label>Upload Application (required)</label>
+    <input type="file" id="upApplication" accept="application/pdf">
+
+    <label>Upload MPP (optional)</label>
+    <input type="file" id="upMPP" accept="application/pdf">
+
+    <div id="apaWrap">
+      <label>Upload APA (TD only)</label>
+      <input type="file" id="upAPA" accept="application/pdf">
+    </div>
+
+    <label>Manual JSON (optional)</label>
+    <textarea id="manualJson" rows="6" placeholder='{"Contact_Name":"Ryan Smith","Lender_Name":"TD"}'></textarea>
+
+    <div style="margin-top:16px">
+      <button id="btnPkg">Build Signing Package</button>
+      <button id="btnSingles">Generate Editable Singles</button>
+      <button id="btnInfo">Create Info Cover Page</button>
+    </div>
+  </main>
+
+  <!-- Dynamic loader so the correct app.js path is found automatically -->
   <script>
-    // Repo-aware base
-    const parts = location.pathname.split('/').filter(Boolean);
-    const REPO_BASE = parts.length ? `/${parts[0]}/` : '/';
-    const APP_URL = `${REPO_BASE}index.html`;
-
-    // Normalize “smart” punctuation to ASCII (prevents stray Unicode)
-    function normalizeAscii(s){
-      return s
-        // dashes: hyphen-minus
-        .replace(/[\u2010-\u2015\u2212]/g, "-")
-        // quotes
-        .replace(/[\u2018\u2019\u2032]/g, "'")
-        .replace(/[\u201C\u201D\u2033]/g, '"')
-        // spaces
-        .replace(/\u00A0/g, " ");
-    }
-
-    // UTF-8 safe Base64URL encoder using TextEncoder
-    function b64urlFromString(s){
-      const bytes = new TextEncoder().encode(s);
-      let bin = "";
-      for (let i=0;i<bytes.length;i++) bin += String.fromCharCode(bytes[i]);
-      return btoa(bin).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
-    }
-
-    function encodePayload(obj){
-      const json = JSON.stringify(obj);
-      return b64urlFromString(normalizeAscii(json));
-    }
-
-    document.getElementById('launch').addEventListener('click', () => {
-      const raw = document.getElementById('payload').value.trim();
-      let url = APP_URL;
-      if (raw) {
-        let obj;
-        try { obj = JSON.parse(raw); }
-        catch { alert('Manual payload is not valid JSON.'); return; }
-        const enc = encodePayload(obj);   // <-- FIXED (UTF-8 + normalization)
-        url += `?data=${enc}`;
-      }
-      location.href = url;
-    });
+    (function(){
+      const parts = location.pathname.split('/').filter(Boolean);
+      const REPO_BASE = parts.length ? `/${parts[0]}/` : '/';
+      const script = document.createElement('script');
+      script.src = `${REPO_BASE}assets/js/app.js?v=20251106`; // auto-resolves on GH Pages
+      document.head.appendChild(script);
+    })();
   </script>
 </body>
 </html>
