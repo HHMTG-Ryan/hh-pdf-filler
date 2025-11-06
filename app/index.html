@@ -3,77 +3,49 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>HH Signing Package Builder</title>
-
-  <!-- pdf-lib + JSZip -->
-  <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-
+  <title>Launch – HH Signing Package Builder</title>
   <style>
-    :root { --fg:#111; --muted:#666; --ok:#1a7f37; --err:#b00020; }
-    body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:var(--fg);
-           margin:24px; max-width:1000px; }
-    h1 { font-size:22px; margin:0 0 10px; }
-    .row { margin:12px 0; display:grid; gap:8px; }
-    label { font-size:12px; color:var(--muted); }
-    select, input[type=file], button, textarea { width:100%; padding:10px; font-size:14px; }
-    button { cursor:pointer; }
-    .two { grid-template-columns: 1fr 1fr; display:grid; gap:12px; }
-    .muted { color:var(--muted); }
-    .ok { color:var(--ok); }
-    .err { color:var(--err); }
-    .warn { color:#946200; }
-    .flex { display:flex; gap:12px; flex-wrap:wrap; }
-    .btn { padding:10px 14px; border:1px solid #ddd; border-radius:8px; background:#fff; }
-    .btn.primary { background:#0a7cff; color:#fff; border-color:#0a7cff; }
-    .btn.secondary { background:#fff; }
-    .hint { font-size:12px; color:var(--muted); }
-    details { margin-top:10px; }
-    code { background:#f6f6f6; padding:2px 4px; border-radius:4px; }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px}
+    .row{margin:12px 0}
+    button{padding:10px 14px;border:1px solid #ddd;border-radius:8px;background:#0a7cff;color:#fff;cursor:pointer}
+    textarea{width:100%;height:160px}
   </style>
 </head>
 <body>
-  <h1>HH Signing Package Builder</h1>
-  <div id="status" class="row muted">Loading…</div>
-
-  <div class="row two">
-    <div>
-      <label for="lender">Lender (auto-detected, you can override)</label>
-      <select id="lender"></select>
-    </div>
-    <div>
-      <label for="pkg">Package Type</label>
-      <select id="pkg">
-        <option value="standard">Standard</option>
-        <option value="heloc">HELOC</option>
-      </select>
-    </div>
-  </div>
-
+  <h1>Launch HH Signing Package Builder</h1>
+  <p class="row">Optional: paste a JSON payload (or leave empty to use the app’s Manual JSON box).</p>
+  <textarea id="payload" placeholder='{"Contact_Name":"Ryan Smith","Lender_Name":"TD","City":"Kamloops"}'></textarea>
   <div class="row">
-    <label>Uploads</label>
-    <div class="two">
-      <div><span class="hint">Commitment (PDF, required)</span><input type="file" id="upCommitment" accept="application/pdf"/></div>
-      <div><span class="hint">Mortgage Application (PDF, required)</span><input type="file" id="upApplication" accept="application/pdf"/></div>
-    </div>
-    <div class="two">
-      <div><span class="hint">Manulife MPP (PDF, optional)</span><input type="file" id="upMPP" accept="application/pdf"/></div>
-      <div id="apaWrap" style="display:none"><span class="hint">Appropriate Product (TD only – optional)</span><input type="file" id="upAPA" accept="application/pdf"/></div>
-    </div>
+    <button id="launch">🚀 Launch App</button>
   </div>
 
-  <div class="row flex">
-    <button id="btnPkg" class="btn primary">Generate Signing Package (Flattened)</button>
-    <button id="btnSingles" class="btn secondary">Download Editable Singles (ZIP)</button>
-    <button id="btnInfo" class="btn secondary">Download Info Cover Page</button>
-  </div>
+  <script>
+    // Repo-aware base (works locally and on GitHub Pages)
+    const parts = location.pathname.split('/').filter(Boolean);
+    const REPO_BASE = parts.length ? `/${parts[0]}/` : '/';
 
-  <details>
-    <summary>Manual JSON (testing only)</summary>
-    <div class="hint">If Zoho payload is missing, paste JSON and run with mock data.</div>
-    <textarea id="manualJson" rows="8" placeholder='{"Contact_Name":"Ryan Smith","Lender_Name":"TD","City":"Kamloops"}'></textarea>
-  </details>
+    // UTF-8 safe Base64URL encoder (prevents InvalidCharacterError)
+    function b64urlFromJSON(obj){
+      const s = typeof obj === 'string' ? obj : JSON.stringify(obj);
+      return btoa(unescape(encodeURIComponent(s)))
+        .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+    }
 
-  <script src="../assets/js/app.js"></script>
+    document.getElementById('launch').addEventListener('click', () => {
+      const raw = document.getElementById('payload').value.trim();
+      let url = `${REPO_BASE}index.html`; // your app page
+      if (raw) {
+        try {
+          const json = JSON.parse(raw);
+          const enc = b64urlFromJSON(json);
+          url += `?data=${enc}`;
+        } catch {
+          alert('Manual payload is not valid JSON. Fix it or clear the box.'); 
+          return;
+        }
+      }
+      location.href = url; // open in same tab
+    });
+  </script>
 </body>
 </html>
