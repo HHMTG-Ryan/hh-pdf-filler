@@ -1,4 +1,4 @@
-/* HH Signing Package Builder – app.js (repo-aware paths)
+/* HH Signing Package Builder – app.js (repo-aware paths, global mapping)
  * Repo layout expected:
  *   /config/standard_pkg.json, /config/map.json
  *   /data/templates/*.pdf  (lender docs, headers-signing-package.pdf, etc.)
@@ -32,10 +32,7 @@ function setStatus(msg, cls = "muted") {
 //////////////////////////
 // Paths (GitHub Pages project base)
 //////////////////////////
-// e.g. https://user.github.io/HH-LENDER-DOCS-FILLER/app/
-//      location.pathname = "/HH-LENDER-DOCS-FILLER/app/"
 const _parts = location.pathname.split("/").filter(Boolean);
-// repo root like "/HH-LENDER-DOCS-FILLER/"
 const REPO_BASE = _parts.length ? `/${_parts[0]}/` : "/";
 const CONFIG_BASE = `${REPO_BASE}config/`;
 const TEMPL_BASE  = `${REPO_BASE}data/templates/`;
@@ -130,7 +127,10 @@ async function fillTemplateBytes(templatePath, record, map) {
   const pdfDoc = await PDFLib.PDFDocument.load(bytes);
   const form = pdfDoc.getForm();
 
-  for (const [crmKey, pdfField] of Object.entries(map || {})) {
+  // Use a unified global mapping
+  const usedMap = map && (map.__default || map);
+
+  for (const [crmKey, pdfField] of Object.entries(usedMap || {})) {
     const val = record[crmKey] ?? record[crmKey.split(".").pop()];
     const v = normalize(val);
     try {
@@ -183,6 +183,21 @@ async function makeHeaderPageBytes(headersPdfPath, headerIndex1Based) {
 }
 
 //////////////////////////
+// Global map-aware adder
+//////////////////////////
+async function addTemplateToMerge(relPath, record, fieldMap, bucket) {
+  const fullPath = `${TEMPL_BASE}${relPath}`;
+  try {
+    const filled = await fillTemplateBytes(fullPath, record, fieldMap);
+    bucket.push(filled);
+  } catch (err) {
+    console.warn(`⚠️ Could not fill ${relPath}, using static version instead:`, err.message);
+    const bytes = await fetchPdfBytes(fullPath);
+    bucket.push(bytes);
+  }
+}
+
+//////////////////////////
 // ZIP + Info Cover
 //////////////////////////
 async function downloadZip(namedBytes) {
@@ -230,7 +245,7 @@ async function makeInfoCoverPdf(record) {
   let record = readFromQuery() || readFromWindowName();
   if (!record && els.manualJson?.value?.trim()) record = tryJSON(els.manualJson.value.trim());
 
-  // 2) config / manifest
+  // 2) config / manifest / global map
   const manifest = await fetchJson(`${CONFIG_BASE}standard_pkg.json`);
   let fieldMap = {};
   try { fieldMap = await fetchJson(`${CONFIG_BASE}map.json`); } catch { fieldMap = {}; }
@@ -242,7 +257,7 @@ async function makeInfoCoverPdf(record) {
   refreshAPA();
   els.lender?.addEventListener("change", refreshAPA);
 
-  // 4) Buttons
+  // 4) Build Signing Package (filled then flattened)
   els.btnPkg?.addEventListener("click", async () => {
     try {
       if (!record && !els.manualJson?.value?.trim()) throw new Error("No record payload. Paste JSON or launch from CRM.");
@@ -252,7 +267,7 @@ async function makeInfoCoverPdf(record) {
       setStatus("Building signing package…", "muted");
 
       const lenderPrefix = els.lender.value;
-      const pkgType = els.pkg.value; // "Standard" or "HELOC"
+      const pkgType = (els.pkg.value || "Standard").toLowerCase();
       const headersPath = `${TEMPL_BASE}${manifest.headers_pdf}`;
 
       // Upload bytes
@@ -271,18 +286,21 @@ async function makeInfoCoverPdf(record) {
       async function pushStatic(relPath) { toMerge.push(await fetchPdfBytes(`${TEMPL_BASE}${relPath}`)); }
       async function pushBytes(bytes) { toMerge.push(bytes); }
 
-      // Walk manifest sequence & conditions
+      // Walk manifest sequence & conditions (with global fill)
       for (const spec of manifest.sequence) {
         if (spec.condition === "lender_has_TD" && !isTD(lenderPrefix)) continue;
-        if (spec.condition === "package_is_HELOC" && pkgType.toLowerCase() !== "heloc") continue;
-        if (spec.condition === "package_is_STANDARD" && pkgType.toLowerCase() !== "standard") continue;
+        if (spec.condition === "package_is_HELOC" && pkgType !== "heloc") continue;
+        if (spec.condition === "package_is_STANDARD" && pkgType !== "standard") continue;
 
         if (spec.no_header !== true && spec.header) await pushHeader(spec.header);
 
         // MPP vs Prospr
         if (spec.doc_if_upload || spec.doc_if_missing) {
-          if (upMPPBytes) await pushBytes(upMPPBytes);
-          else await pushStatic(manifest.prospr_fallback);
+          if (upMPPBytes) {
+            await pushBytes(upMPPBytes); // keep uploaded MPP as-is
+          } else {
+            await addTemplateToMerge(manifest.prospr_fallback, record, fieldMap, toMerge);
+          }
           continue;
         }
 
@@ -294,15 +312,18 @@ async function makeInfoCoverPdf(record) {
         // LENDER_* auto-pick
         if (spec.doc.startsWith("LENDER_")) {
           const suffix = spec.doc.replace(/^LENDER_/, "");
-          const path = `${lenderFile(lenderPrefix, suffix)}`;
-          const b = await tryFetchPdfBytes(`${TEMPL_BASE}${path}`);
-          if (!b) { if (spec.optional) continue; else throw new Error(`Missing required lender doc: ${path}`); }
-          await pushBytes(b);
+          const rel = `${lenderFile(lenderPrefix, suffix)}`;
+          const exists = await tryFetchPdfBytes(`${TEMPL_BASE}${rel}`);
+          if (!exists) {
+            if (spec.optional) continue;
+            throw new Error(`Missing required lender doc: ${rel}`);
+          }
+          await addTemplateToMerge(rel, record, fieldMap, toMerge);
           continue;
         }
 
         // Plain relative template path
-        await pushStatic(spec.doc);
+        await addTemplateToMerge(spec.doc, record, fieldMap, toMerge);
       }
 
       // Merge + flatten
@@ -324,12 +345,13 @@ async function makeInfoCoverPdf(record) {
     }
   });
 
+  // 5) Editable Singles (remain editable)
   els.btnSingles?.addEventListener("click", async () => {
     try {
       if (!record && !els.manualJson?.value?.trim()) throw new Error("No record payload. Paste JSON or relaunch from CRM.");
       setStatus("Generating editable singles…", "muted");
 
-      // reload map just in case
+      // Always refresh map (optional)
       let localMap = {};
       try { localMap = await fetchJson(`${CONFIG_BASE}map.json`); } catch {}
 
@@ -373,6 +395,7 @@ async function makeInfoCoverPdf(record) {
     }
   });
 
+  // 6) Info Cover Page (for your internal reference)
   els.btnInfo?.addEventListener("click", async () => {
     try {
       const rec = record || tryJSON(els.manualJson?.value?.trim()) || {};
