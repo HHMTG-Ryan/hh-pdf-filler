@@ -127,7 +127,7 @@ async function fillTemplateBytes(templatePath, record, map) {
   const pdfDoc = await PDFLib.PDFDocument.load(bytes);
   const form = pdfDoc.getForm();
 
-  // Use a unified global mapping
+  // Use a unified global mapping (CSV -> config/map.json under __default)
   const usedMap = map && (map.__default || map);
 
   for (const [crmKey, pdfField] of Object.entries(usedMap || {})) {
@@ -147,7 +147,7 @@ async function fillTemplateBytes(templatePath, record, map) {
       } else if (field.setText) {
         field.setText(v);
       }
-    } catch {}
+    } catch {} // field not found – skip
   }
   try {
     const font = await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica);
@@ -260,7 +260,9 @@ async function makeInfoCoverPdf(record) {
   // 4) Build Signing Package (filled then flattened)
   els.btnPkg?.addEventListener("click", async () => {
     try {
-      if (!record && !els.manualJson?.value?.trim()) throw new Error("No record payload. Paste JSON or launch from CRM.");
+      // Re-parse Manual JSON on click if needed
+      if (!record && els.manualJson?.value?.trim()) record = tryJSON(els.manualJson.value.trim());
+      if (!record) throw new Error("No record payload. Paste JSON or launch from CRM.");
       if (!els.upCommitment?.files[0]) throw new Error("Commitment is required.");
       if (!els.upApplication?.files[0]) throw new Error("Mortgage Application is required.");
 
@@ -270,11 +272,11 @@ async function makeInfoCoverPdf(record) {
       const pkgType = (els.pkg.value || "Standard").toLowerCase();
       const headersPath = `${TEMPL_BASE}${manifest.headers_pdf}`;
 
-      // Upload bytes
+      // Upload bytes (FIX: upAPABytes typo)
       const upCommitmentBytes = await els.upCommitment.files[0].arrayBuffer();
       const upApplicationBytes = await els.upApplication.files[0].arrayBuffer();
       const upMPPBytes = els.upMPP?.files[0] ? await els.upMPP.files[0].arrayBuffer() : null;
-      const upAPABtes = els.upAPA?.files[0] ? await els.upAPA.files[0].arrayBuffer() : null;
+      const upAPABytes = els.upAPA?.files[0] ? await els.upAPA.files[0].arrayBuffer() : null;
 
       const toMerge = [];
 
@@ -307,7 +309,7 @@ async function makeInfoCoverPdf(record) {
         // Uploads
         if (spec.doc === "UPLOAD_Commitment.pdf") { await pushBytes(upCommitmentBytes); continue; }
         if (spec.doc === "UPLOAD_Application.pdf") { await pushBytes(upApplicationBytes); continue; }
-        if (spec.doc === "UPLOAD_APA_TD.pdf") { if (isTD(lenderPrefix) && upAPABtes) await pushBytes(upAPABtes); continue; }
+        if (spec.doc === "UPLOAD_APA_TD.pdf") { if (isTD(lenderPrefix) && upAPABytes) await pushBytes(upAPABytes); continue; }
 
         // LENDER_* auto-pick
         if (spec.doc.startsWith("LENDER_")) {
@@ -348,7 +350,8 @@ async function makeInfoCoverPdf(record) {
   // 5) Editable Singles (remain editable)
   els.btnSingles?.addEventListener("click", async () => {
     try {
-      if (!record && !els.manualJson?.value?.trim()) throw new Error("No record payload. Paste JSON or relaunch from CRM.");
+      if (!record && els.manualJson?.value?.trim()) record = tryJSON(els.manualJson.value.trim());
+      if (!record) throw new Error("No record payload. Paste JSON or relaunch from CRM.");
       setStatus("Generating editable singles…", "muted");
 
       // Always refresh map (optional)
@@ -417,5 +420,10 @@ async function makeInfoCoverPdf(record) {
   // Initial UI state
   populateLenderOptions(detected || "TD");
   if (els.pkg && !els.pkg.value) els.pkg.value = "Standard";
-  setStatus(record ? `Payload OK. Lender ≈ ${detected || "TD"}. Choose options and upload files.` : "Paste JSON or launch from CRM.", record ? "ok" : "warn");
+  setStatus(
+    record
+      ? `Payload OK. Lender ≈ ${detected || "TD"}. Choose options and upload files.`
+      : "Paste JSON or launch from CRM.",
+    record ? "ok" : "warn"
+  );
 })();
