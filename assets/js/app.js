@@ -1,8 +1,7 @@
-/* HH Signing Package Builder – app.js (repo-aware paths, global mapping)
- * Repo layout expected:
- *   /config/standard_pkg.json, /config/map.json
- *   /data/templates/*.pdf  (lender docs, headers-signing-package.pdf, etc.)
- *   /assets/js/app.js      (this file)
+/* HH Signing Package Builder - app.js (repo-aware paths, global mapping)
+ * Requires (in HTML before this file):
+ *   - pdf-lib (PDFLib global)
+ *   - jszip   (JSZip global)
  */
 
 //////////////////////////
@@ -41,8 +40,6 @@ const TEMPL_BASE  = `${REPO_BASE}data/templates/`;
 // Constants
 //////////////////////////
 const LENDER_OPTIONS = ["TD","MCAP","CMLS","CWB","FirstNat","Haventree","Lendwise","Scotia","Strive","Bridgewater","Private"];
-
-// Header page indices inside headers-signing-package.pdf (1-based)
 const HEADER_INDEX = { WMB:1, MPP_OR_PROSPR:2, COMMITMENT:3, COB:4, FORM10:5, APPLICATION:6 };
 
 //////////////////////////
@@ -57,17 +54,13 @@ function atobUtf8(b64) {
   try { return decodeURIComponent(escape(bin)); } catch { return bin; }
 }
 function tryJSON(text) { try { const o = JSON.parse(text); return o && typeof o === "object" ? o : null; } catch { return null; } }
-
-// Tries Base64URL → JSON; falls back to URL-decoded JSON
 function decodeQueryPayload(raw) {
   if (!raw) return null;
   try { const s = atobUtf8(b64urlToB64(raw)); const o = JSON.parse(s); if (o && typeof o === "object") return o; } catch {}
   try { const s = decodeURIComponent(raw); const o = JSON.parse(s); if (o && typeof o === "object") return o; } catch {}
   return null;
 }
-function readFromQuery() {
-  try { const p = new URLSearchParams(location.search); return decodeQueryPayload(p.get("data")); } catch { return null; }
-}
+function readFromQuery() { try { const p = new URLSearchParams(location.search); return decodeQueryPayload(p.get("data")); } catch { return null; } }
 function readFromWindowName() { try { return decodeQueryPayload(window.name || ""); } catch { return null; } }
 
 //////////////////////////
@@ -118,24 +111,37 @@ async function fillTemplateBytes(templatePath, record, map) {
   const pdfDoc = await PDFLib.PDFDocument.load(bytes);
   const form = pdfDoc.getForm();
 
+  // Unified global mapping
   const usedMap = map && (map.__default || map);
-  for (const [crmKey, pdfField] of Object.entries(usedMap || {})) {
-    const val = record[crmKey] ?? record[crmKey].split ? record[crmKey.split(".").pop()] : record[crmKey];
-    const v = normalize(val);
-    try {
-      const field = form.getField(pdfField);
-      const type = field.constructor.name;
-      if (type === "PDFTextField") field.setText(v);
-      else if (type === "PDFDropdown") { try { field.select(v); } catch { field.setText(v); } }
-      else if (type === "PDFCheckBox") (/^(yes|true|1|x)$/i.test(v) ? field.check() : field.uncheck());
-      else if (type === "PDFRadioGroup") { try { field.select(v); } catch {} }
-      else if (field.setText) field.setText(v);
-    } catch {}
+  if (record && usedMap) {
+    for (const [crmKeyRaw, pdfField] of Object.entries(usedMap)) {
+      const keyStr = (typeof crmKeyRaw === "string") ? crmKeyRaw : String(crmKeyRaw ?? "");
+      const leaf = keyStr.includes(".") ? keyStr.split(".").pop() : keyStr;
+
+      const hasKey   = keyStr && Object.prototype.hasOwnProperty.call(record, keyStr);
+      const hasLeaf  = leaf  && Object.prototype.hasOwnProperty.call(record, leaf);
+
+      const val = (hasKey ? record[keyStr] : undefined) ??
+                  (hasLeaf ? record[leaf]  : undefined) ?? "";
+
+      const v = normalize(val);
+      try {
+        const field = form.getField(pdfField);
+        const type = field.constructor.name;
+        if (type === "PDFTextField")      field.setText(v);
+        else if (type === "PDFDropdown")  { try { field.select(v); } catch { field.setText(v); } }
+        else if (type === "PDFCheckBox")  (/^(yes|true|1|x)$/i.test(v) ? field.check() : field.uncheck());
+        else if (type === "PDFRadioGroup"){ try { field.select(v); } catch {} }
+        else if (field.setText)           field.setText(v);
+      } catch {}
+    }
   }
+
   try {
     const font = await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica);
     pdfDoc.getForm().updateFieldAppearances(font);
   } catch {}
+
   return await pdfDoc.save({ updateFieldAppearances: false });
 }
 
@@ -204,7 +210,7 @@ async function makeInfoCoverPdf(record) {
     page.drawText(String(val || ""), { x: 200, y, size: 11, font });
     y -= 18;
   }
-  page.drawText("HH - Info Cover Page", { x: 40, y, size: 16, font: fontB }); // ASCII hyphen
+  page.drawText("HH - Info Cover Page", { x: 40, y, size: 16, font: fontB }); y -= 28; // ASCII hyphen
   line("Deal / File Name:", record.Deal_Name || record.Name);
   line("Contact Name:", record.Contact_Name);
   line("Lender:", record.Lender_Name);
@@ -276,17 +282,20 @@ async function makeInfoCoverPdf(record) {
 
         if (spec.no_header !== true && spec.header) await pushHeader(spec.header);
 
+        // MPP vs Prospr
         if (spec.doc_if_upload || spec.doc_if_missing) {
           if (upMPPBytes) { await pushBytes(upMPPBytes); }
           else { await addTemplateToMerge(manifest.prospr_fallback, record, fieldMap, toMerge); }
           continue;
         }
 
+        // Uploads
         if (spec.doc === "UPLOAD_Commitment.pdf") { await pushBytes(upCommitmentBytes); continue; }
         if (spec.doc === "UPLOAD_Application.pdf") { await pushBytes(upApplicationBytes); continue; }
         if (spec.doc === "UPLOAD_APA_TD.pdf") { if (isTD(lenderPrefix) && upAPABytes) await pushBytes(upAPABytes); continue; }
 
-        if (spec.doc.startsWith("LENDER_")) {
+        // LENDER_* auto-pick
+        if (spec.doc?.startsWith?.("LENDER_")) {
           const suffix = spec.doc.replace(/^LENDER_/, "");
           const rel = `${lenderFile(lenderPrefix, suffix)}`;
           const exists = await tryFetchPdfBytes(`${TEMPL_BASE}${rel}`);
@@ -298,6 +307,7 @@ async function makeInfoCoverPdf(record) {
           continue;
         }
 
+        // Plain relative template path
         await addTemplateToMerge(spec.doc, record, fieldMap, toMerge);
       }
 
@@ -364,7 +374,7 @@ async function makeInfoCoverPdf(record) {
     }
   });
 
-  // 6) Info Cover Page (for your internal reference)
+  // 6) Info Cover Page
   els.btnInfo?.addEventListener("click", async () => {
     try {
       const rec = record || tryJSON(els.manualJson?.value?.trim()) || {};
