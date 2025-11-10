@@ -1,4 +1,4 @@
-/* HH Signing Package Builder - app.js (repo-aware paths, global mapping)
+/* HH Signing Package Builder – app.js (repo-aware paths, global mapping)
  * Repo layout expected:
  *   /config/standard_pkg.json, /config/map.json
  *   /data/templates/*.pdf  (lender docs, headers-signing-package.pdf, etc.)
@@ -10,7 +10,7 @@
  */
 
 //////////////////////////
-// DOM
+// DOM ELEMENTS
 //////////////////////////
 const els = {
   status: document.getElementById("status"),
@@ -34,20 +34,18 @@ function setStatus(msg, cls = "muted") {
 }
 
 //////////////////////////
-// Paths (GitHub Pages project base)
+// PATHS
 //////////////////////////
 const _parts = location.pathname.split("/").filter(Boolean);
-// e.g., "/HH-LENDER-DOCS-FILLER/"
 const REPO_BASE = _parts.length ? `/${_parts[0]}/` : "/";
 const CONFIG_BASE = `${REPO_BASE}config/`;
 const TEMPL_BASE  = `${REPO_BASE}data/templates/`;
 
 //////////////////////////
-// Constants
+// CONSTANTS
 //////////////////////////
 const LENDER_OPTIONS = ["TD","MCAP","CMLS","CWB","FirstNat","Haventree","Lendwise","Scotia","Strive","Bridgewater","Private"];
 
-// Header page indices inside headers-signing-package.pdf (1-based)
 const HEADER_INDEX = {
   WMB: 1,
   MPP_OR_PROSPR: 2,
@@ -57,14 +55,13 @@ const HEADER_INDEX = {
   APPLICATION: 6
 };
 
-// Debug toggle (set true when you want noisy console diagnostics)
 const DEBUG_FILL = false;
 function dbg(...a){ if (DEBUG_FILL) console.log(...a); }
 function dwarn(...a){ if (DEBUG_FILL) console.warn(...a); }
 function derr(...a){ if (DEBUG_FILL) console.error(...a); }
 
 //////////////////////////
-// Payload readers
+// PAYLOAD READERS
 //////////////////////////
 function b64urlToB64(s) {
   const n = s.replace(/-/g, "+").replace(/_/g, "/").replace(/\s/g, "+");
@@ -85,7 +82,7 @@ function readFromWindowName() {
 }
 
 //////////////////////////
-// Utils
+// UTILS
 //////////////////////////
 function sanitizeName(s) {
   return (s || "").toString().normalize("NFKD").replace(/[^\w\- ]+/g, "").trim();
@@ -114,7 +111,7 @@ function populateLenderOptions(selected) {
 }
 
 //////////////////////////
-// Fetch helpers
+// FETCH HELPERS
 //////////////////////////
 async function fetchJson(url) {
   const r = await fetch(url, { cache: "no-store" });
@@ -129,7 +126,7 @@ async function fetchPdfBytes(path) {
 async function tryFetchPdfBytes(path) { try { return await fetchPdfBytes(path); } catch { return null; } }
 
 //////////////////////////
-// Numbers, rates, amortization (for COB)
+// NUMBER + AMORTIZATION UTILS
 //////////////////////////
 function nnum(v){
   if (typeof v === "string") v = v.replace(/[, ]+/g, "");
@@ -142,15 +139,15 @@ function ppy(freq){
   const t = (freq || "").toLowerCase();
   if (t.includes("weekly")) return 52;
   if (t.includes("semi-month")) return 24;
-  if (t.includes("accelerat")) return 26; // accelerated bi-weekly
-  if (t.includes("bi")) return 26;        // bi-weekly
+  if (t.includes("accelerat")) return 26;
+  if (t.includes("bi")) return 26;
   if (t.includes("month")) return 12;
   return 12;
 }
 function effAnnualFromNominal(nomPct, comp){
   const r = nnum(nomPct)/100;
   const c = (comp || "").toLowerCase();
-  if (c.includes("semi")) return Math.pow(1 + r/2, 2) - 1; // Canadian SA
+  if (c.includes("semi")) return Math.pow(1 + r/2, 2) - 1;
   if (c.includes("annual")) return r;
   return r;
 }
@@ -181,16 +178,17 @@ function balanceAfter(P, nomPct, comp, freq, amortMonths, paidMonths, payAmount)
 }
 
 //////////////////////////
-// COB calculations (pre-fill before flattening)
+// COB CALCULATIONS
 //////////////////////////
 function computeCOB(record){
-  // Base inputs (support both CRM keys and mapped/alternate)
   const P        = nnum(record.Total_Mortgage_Amount_incl_Insurance || record["Mortgage Amount"]);
   const nomPct   = nnum(record.Interest_Rate || record.Mortgage_Rate);
   const comp     = record.Compounding || "Semi-Annual";
   const freq     = record.Payment_Frequency || record.Mtg_Pmt_Freq || "Monthly";
   const termM    = nnum(record.Term_Months);
-  const amortM   = record.Amortization ? nnum(record.Amortization)*12 : nnum(record.Mtg_Amortization);
+  const amortM   = record.Mtg_Amortization ? nnum(record.Mtg_Amortization)
+                    : (record.Amortization ? nnum(record.Amortization)*12
+                    : nnum(record.Amortization_Years));
   const A_input  = record.Payment_Amount || record.Mtg_Pmt_Amount;
 
   const A = (A_input && nnum(A_input)>0) ? nnum(A_input)
@@ -202,10 +200,6 @@ function computeCOB(record){
   const principalRepaid = Math.max(0, P - Bal);
   const interestToTerm = Math.max(0, totalPaid - principalRepaid);
 
-  // Included-in-APR checkboxes and fee sum with business rules:
-  // - Always include in APR if business rule says include=true AND value > 0
-  // - Borrower's lawyer is never included
-  // - Only check the box if value > 0 (even if include=true)
   const feeLogic = [
     { field: "Title_Insurance",        cb: "Check Box33", include: true },
     { field: "Appraisal_AVM_Fees",     cb: "Check Box36", include: true },
@@ -227,11 +221,6 @@ function computeCOB(record){
 
   const totalFees = feesIncluded;
   const totalCOB  = interestToTerm + totalFees;
-
-  // APR approximation:
-  // APR = 100 * (Cost of Credit per year / average principal)
-  // Cost of Credit for term = interestToTerm + totalFees
-  // Average principal approx = (P + Bal) / 2
   const termYears = nnum(termM)/12 || 1;
   const avgPrincipal = (P + Bal) / 2 || P;
   const APR = (avgPrincipal > 0)
@@ -239,28 +228,18 @@ function computeCOB(record){
     : 0;
 
   return {
-    ...checkboxStates,                         // checkbox true/false
-    "Mtg_Pmt_Amount":           money(A),      // echo payment back if shown on form
-    "Balance_Calc":             money(Bal),
-    "Total_Interest_To_Term":   money(interestToTerm),
-    "Total_Fees_Calc":          money(totalFees),
-    "Total_COB_Calc":           money(totalCOB),
-    "APR_Calc":                 (Math.round(APR*100)/100).toFixed(2)
+    ...checkboxStates,
+    "Mtg_Pmt_Amount": money(A),
+    "Balance_Calc": money(Bal),
+    "Total_Interest_To_Term": money(interestToTerm),
+    "Total_Fees_Calc": money(totalFees),
+    "Total_COB_Calc": money(totalCOB),
+    "APR_Calc": (Math.round(APR*100)/100).toFixed(2)
   };
 }
 
-// Per-template derived inject
-function withDerivedForTemplate(relPath, record){
-  let derived = {};
-  if (/COB/i.test(relPath)) {
-    derived = { ...derived, ...computeCOB(record) };
-  }
-  // FORM10 and HELOC COB do not need calculations per your instruction
-  return { ...record, ...derived };
-}
-
 //////////////////////////
-// PDF filling & merging
+// PDF FILLING + MERGING
 //////////////////////////
 function normalize(v) {
   if (v == null) return "";
@@ -271,18 +250,12 @@ function normalize(v) {
 async function fillTemplateBytes(templatePath, record, map) {
   const bytes = await fetchPdfBytes(templatePath);
   const pdfDoc = await PDFLib.PDFDocument.load(bytes);
-
   const form = pdfDoc.getForm?.();
   const fields = form?.getFields?.() || [];
-  const fieldNames = new Set(fields.map(f => {
-    try { return f.getName(); } catch { return ""; }
-  }).filter(Boolean));
+  const fieldNames = new Set(fields.map(f => { try { return f.getName(); } catch { return ""; } }).filter(Boolean));
 
   dbg(`Template ${templatePath}: found ${fieldNames.size} form fields`);
-
-  if (!fieldNames.size) {
-    throw new Error("No AcroForm fields detected (flattened or XFA template?)");
-  }
+  if (!fieldNames.size) throw new Error("No AcroForm fields detected (flattened or XFA template?)");
 
   const usedMap = map && (map.__default || map) || {};
   let hits = 0, misses = 0;
@@ -290,25 +263,17 @@ async function fillTemplateBytes(templatePath, record, map) {
   for (const [crmKeyRaw, pdfField] of Object.entries(usedMap)) {
     const keyStr = (typeof crmKeyRaw === "string") ? crmKeyRaw : String(crmKeyRaw ?? "");
     const leaf = keyStr.includes(".") ? keyStr.split(".").pop() : keyStr;
-
     const hasKey  = keyStr && Object.prototype.hasOwnProperty.call(record || {}, keyStr);
     const hasLeaf = leaf  && Object.prototype.hasOwnProperty.call(record || {}, leaf);
-
     const val = (hasKey ? record[keyStr] : undefined) ??
                 (hasLeaf ? record[leaf] : undefined) ?? "";
-
     const v = normalize(val);
-
-    if (!fieldNames.has(pdfField)) {
-      misses++;
-      continue;
-    }
+    if (!fieldNames.has(pdfField)) { misses++; continue; }
 
     try {
       const field = form.getField(pdfField);
       const type = field.constructor.name;
       if (type === "PDFCheckBox") {
-        // For checkboxes, allow boolean true/false or "Yes"/"No"
         /^(yes|true|1|x)$/i.test(String(val)) ? field.check() : field.uncheck();
       } else if (type === "PDFDropdown") {
         try { field.select(v); } catch { field.setText(v); }
@@ -324,18 +289,13 @@ async function fillTemplateBytes(templatePath, record, map) {
     }
   }
 
-  // Update appearances to ensure text paints into fields
   try {
     const font = await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica);
     form.updateFieldAppearances(font);
   } catch {}
 
   dbg(`Filled ${hits} fields (misses: ${misses}) in ${templatePath}`);
-
-  if (hits === 0) {
-    throw new Error("No fields filled (check mapping vs PDF field names, or template type)");
-  }
-
+  if (hits === 0) throw new Error("No fields filled (check mapping vs PDF field names, or template type)");
   return await pdfDoc.save({ updateFieldAppearances: false });
 }
 
@@ -366,12 +326,12 @@ async function makeHeaderPageBytes(headersPdfPath, headerIndex1Based) {
 }
 
 //////////////////////////
-// Global map-aware adder (injects derived values per template)
+// GLOBAL MAP-AWARE ADDER
 //////////////////////////
 async function addTemplateToMerge(relPath, record, fieldMap, bucket) {
   const fullPath = `${TEMPL_BASE}${relPath}`;
   try {
-    const rec2 = withDerivedForTemplate(relPath, record);
+    const rec2 = /COB/i.test(relPath) ? { ...record, ...computeCOB(record) } : record;
     const filled = await fillTemplateBytes(fullPath, rec2, fieldMap);
     bucket.push(filled);
   } catch (err) {
@@ -382,7 +342,7 @@ async function addTemplateToMerge(relPath, record, fieldMap, bucket) {
 }
 
 //////////////////////////
-// ZIP + Info Cover
+// ZIP + INFO COVER
 //////////////////////////
 async function downloadZip(namedBytes) {
   const zip = new JSZip();
@@ -420,48 +380,39 @@ async function makeInfoCoverPdf(record) {
 }
 
 //////////////////////////
-// Main
+// MAIN
 //////////////////////////
 (async function run() {
   setStatus("Loading payload...");
-
-  // 1) payload
   let record = readFromQuery() || readFromWindowName();
   if (!record && els.manualJson?.value?.trim()) record = tryJSON(els.manualJson.value.trim());
 
-  // 2) config / manifest / global map
   const manifest = await fetchJson(`${CONFIG_BASE}standard_pkg.json`);
   let fieldMap = {};
   try { fieldMap = await fetchJson(`${CONFIG_BASE}map.json`); } catch { fieldMap = {}; }
 
-  // 3) lender detection + dropdown
   const detected = inferLenderPrefix(record?.Lender_Name || "");
   populateLenderOptions(detected || "TD");
   function refreshAPA() { if (els.apaWrap) els.apaWrap.style.display = isTD(els.lender.value) ? "block" : "none"; }
   refreshAPA();
   els.lender?.addEventListener("change", refreshAPA);
 
-  // 4) Build Signing Package (filled then flattened)
+  // ---- Build Signing Package ----
   els.btnPkg?.addEventListener("click", async () => {
     try {
-      // Re-parse Manual JSON on click if needed
       if (!record && els.manualJson?.value?.trim()) record = tryJSON(els.manualJson.value.trim());
       if (!record) throw new Error("No record payload. Paste JSON or launch from CRM.");
       if (!els.upCommitment?.files[0]) throw new Error("Commitment is required.");
       if (!els.upApplication?.files[0]) throw new Error("Mortgage Application is required.");
-
       setStatus("Building signing package...", "muted");
 
       const lenderPrefix = els.lender.value;
       const pkgType = (els.pkg.value || "Standard").toLowerCase();
       const headersPath = `${TEMPL_BASE}${manifest.headers_pdf}`;
-
-      // Upload bytes
       const upCommitmentBytes = await els.upCommitment.files[0].arrayBuffer();
       const upApplicationBytes = await els.upApplication.files[0].arrayBuffer();
       const upMPPBytes = els.upMPP?.files[0] ? await els.upMPP.files[0].arrayBuffer() : null;
       const upAPABytes = els.upAPA?.files[0] ? await els.upAPA.files[0].arrayBuffer() : null;
-
       const toMerge = [];
 
       async function pushHeader(key) {
@@ -471,30 +422,21 @@ async function makeInfoCoverPdf(record) {
       }
       async function pushBytes(bytes) { toMerge.push(bytes); }
 
-      // Walk manifest sequence & conditions
       for (const spec of manifest.sequence) {
         if (spec.condition === "lender_has_TD" && !isTD(lenderPrefix)) continue;
         if (spec.condition === "package_is_HELOC" && pkgType !== "heloc") continue;
         if (spec.condition === "package_is_STANDARD" && pkgType !== "standard") continue;
-
         if (spec.no_header !== true && spec.header) await pushHeader(spec.header);
 
-        // MPP vs Prospr
         if (spec.doc_if_upload || spec.doc_if_missing) {
-          if (upMPPBytes) {
-            await pushBytes(upMPPBytes); // keep uploaded MPP as-is
-          } else {
-            await addTemplateToMerge(manifest.prospr_fallback, record, fieldMap, toMerge);
-          }
+          if (upMPPBytes) await pushBytes(upMPPBytes);
+          else await addTemplateToMerge(manifest.prospr_fallback, record, fieldMap, toMerge);
           continue;
         }
-
-        // Uploads
         if (spec.doc === "UPLOAD_Commitment.pdf") { await pushBytes(upCommitmentBytes); continue; }
         if (spec.doc === "UPLOAD_Application.pdf") { await pushBytes(upApplicationBytes); continue; }
         if (spec.doc === "UPLOAD_APA_TD.pdf") { if (isTD(lenderPrefix) && upAPABytes) await pushBytes(upAPABytes); continue; }
 
-        // LENDER_* auto-pick
         if (spec.doc && spec.doc.startsWith("LENDER_")) {
           const suffix = spec.doc.replace(/^LENDER_/, "");
           const rel = `${lenderFile(lenderPrefix, suffix)}`;
@@ -507,11 +449,9 @@ async function makeInfoCoverPdf(record) {
           continue;
         }
 
-        // Plain relative template path
         await addTemplateToMerge(spec.doc, record, fieldMap, toMerge);
       }
 
-      // Merge + flatten
       const merged = await mergeDocsFlattened(toMerge);
       const lastName = lastNameFromContact(record?.Contact_Name || "");
       const outName = `${lastName} - Signing Pkg.pdf`;
@@ -530,14 +470,12 @@ async function makeInfoCoverPdf(record) {
     }
   });
 
-  // 5) Editable Singles (remain editable)
+  // ---- Editable Singles ----
   els.btnSingles?.addEventListener("click", async () => {
     try {
       if (!record && els.manualJson?.value?.trim()) record = tryJSON(els.manualJson.value.trim());
       if (!record) throw new Error("No record payload. Paste JSON or relaunch from CRM.");
       setStatus("Generating editable singles...", "muted");
-
-      // Always refresh map (optional)
       let localMap = {};
       try { localMap = await fetchJson(`${CONFIG_BASE}map.json`); } catch {}
 
@@ -551,7 +489,7 @@ async function makeInfoCoverPdf(record) {
         singles.push({ name: "Identification Verification.pdf", bytes: filled });
       }
 
-      // FCT Authorization (if lender file exists)
+      // FCT Auth
       {
         const path = `${TEMPL_BASE}${lenderFile(lenderPrefix, "FCT_Auth.pdf")}`;
         const exists = await tryFetchPdfBytes(path);
@@ -561,7 +499,7 @@ async function makeInfoCoverPdf(record) {
         }
       }
 
-      // Gift Letter (if lender file exists)
+      // Gift Letter
       {
         const path = `${TEMPL_BASE}${lenderFile(lenderPrefix, "Gift_Letter.pdf")}`;
         const exists = await tryFetchPdfBytes(path);
@@ -581,7 +519,7 @@ async function makeInfoCoverPdf(record) {
     }
   });
 
-  // 6) Info Cover Page (internal reference)
+  // ---- Info Cover Page ----
   els.btnInfo?.addEventListener("click", async () => {
     try {
       const rec = record || tryJSON(els.manualJson?.value?.trim()) || {};
@@ -600,7 +538,6 @@ async function makeInfoCoverPdf(record) {
     }
   });
 
-  // Initial UI state
   populateLenderOptions(detected || "TD");
   if (els.pkg && !els.pkg.value) els.pkg.value = "Standard";
   setStatus(
