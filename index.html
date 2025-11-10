@@ -5,65 +5,231 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>HH Lender Docs Filler</title>
 
-  <!-- Required libraries -->
+  <!-- Required libraries (unchanged) -->
   <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" referrerpolicy="no-referrer"></script>
 
   <style>
-    :root {
-      --bg:#f7fafc; --panel:#ffffff; --text:#1a2a33; --muted:#5b7288; --ok:#0e8346; --err:#c62828;
+    /* ===== Theme tokens ===== */
+    :root{
+      --bg: #0b1220;              /* app background */
+      --panel: #0f172a;           /* card surface */
+      --panel-2: #111827;         /* secondary surface */
+      --ink: #e5e7eb;             /* primary text */
+      --muted: #9ca3af;           /* muted text */
+      --brand: #22c55e;           /* brand accent */
+      --brand-ink: #052e1b;       /* brand contrast */
+      --line: #1f2937;            /* subtle borders */
+      --ok: #10b981;              /* success text */
+      --warn: #f59e0b;            /* warn text */
+      --err: #ef4444;             /* error text */
+      --focus: #60a5fa;           /* focus ring */
+      --shadow: 0 14px 35px rgba(0,0,0,.45);
     }
-    body { background:var(--bg); color:var(--text); font-family:-apple-system,system-ui,Segoe UI,Roboto,Arial,sans-serif; margin:0; padding:24px; }
-    main { background:var(--panel); border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,0.08); max-width:860px; margin:auto; padding:24px; }
-    h1 { font-size:22px; margin:0 0 16px; }
-    label { display:block; margin-top:12px; font-weight:600; }
-    input,select,textarea,button { font:inherit; margin-top:4px; }
-    input[type=file], select, textarea { width:100%; }
-    button { background:#0a7cff; color:#fff; border:none; border-radius:8px; padding:10px 16px; margin-top:16px; cursor:pointer; }
-    .muted { color:var(--muted); }
-    .ok { color:var(--ok); }
-    .err { color:var(--err); }
+
+    /* ===== Base ===== */
+    html,body{height:100%;}
+    body{
+      margin:0;
+      color:var(--ink);
+      background:
+        radial-gradient(1300px 600px at 100% -10%, rgba(96,165,250,.08), transparent 60%),
+        radial-gradient(1100px 500px at -10% 110%, rgba(34,197,94,.08), transparent 60%),
+        var(--bg);
+      font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+    }
+
+    /* ===== Shell ===== */
+    .wrap{
+      max-width: 980px;
+      margin: 48px auto;
+      padding: 0 20px;
+    }
+    main{
+      background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0));
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+      padding: 28px;
+      backdrop-filter: blur(6px);
+    }
+
+    /* ===== Header ===== */
+    header{
+      display:flex; align-items:baseline; justify-content:space-between; gap:12px;
+      margin-bottom: 8px;
+    }
+    h1{
+      margin:0;
+      font-size:22px;
+      letter-spacing:.2px;
+    }
+    .sub{
+      margin:0;
+      color:var(--muted);
+      font-size:13px;
+    }
+
+    /* ===== Status pill (uses existing classes set by app.js) ===== */
+    #status{
+      display:inline-flex; align-items:center; gap:8px;
+      font-size:13px; padding:8px 12px; border-radius:999px;
+      border:1px solid #243043; color:var(--muted);
+      background: rgba(255,255,255,.03);
+      margin: 12px 0 18px;
+      user-select:none;
+    }
+    #status.ok{ color:var(--ok); border-color:rgba(16,185,129,.45); }
+    #status.warn{ color:var(--warn); border-color:rgba(245,158,11,.45); }
+    #status.err{ color:var(--err); border-color:rgba(239,68,68,.45); }
+    #status.muted{ color:var(--muted); }
+
+    /* ===== Sections / dividers ===== */
+    .hr{
+      height:1px;
+      background: linear-gradient(90deg, transparent, #263247, transparent);
+      margin: 18px 0;
+      border:0;
+    }
+    .h2{
+      font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.12em;
+      margin: 4px 0 12px;
+    }
+
+    /* ===== Grid ===== */
+    .grid{
+      display:grid;
+      gap:14px;
+      grid-template-columns: 1fr 1fr;
+    }
+    @media (max-width: 880px){
+      .grid{ grid-template-columns:1fr; }
+    }
+
+    /* ===== Field groups ===== */
+    .field{
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+    }
+    .field label{
+      display:block;
+      font-size:12px;
+      color:var(--muted);
+      margin:0 0 6px;
+    }
+
+    /* Inputs (IDs unchanged) */
+    select, input[type="file"], textarea{
+      width:100%;
+      color:var(--ink);
+      background:#0b1020;
+      border:1px solid #243043;
+      border-radius:10px;
+      padding:10px 12px;
+      outline:none;
+    }
+    textarea{ resize:vertical; }
+    select:focus, input[type="file"]:focus, textarea:focus{
+      border-color:var(--focus);
+      box-shadow:0 0 0 3px rgba(96,165,250,.25);
+    }
+
+    /* ===== Buttons (IDs unchanged) ===== */
+    .btnbar{ display:flex; gap:12px; flex-wrap:wrap; margin-top: 6px; }
+    button{
+      font:inherit;
+      display:inline-flex; align-items:center; justify-content:center;
+      gap:8px; padding:12px 16px;
+      border-radius:12px; border:1px solid #243043;
+      background: linear-gradient(180deg, #111a2f, #0e172a);
+      color:#eef2ff; cursor:pointer;
+      transition:.2s transform,.2s box-shadow,.2s background;
+    }
+    button:hover{ transform: translateY(-1px); box-shadow:0 6px 18px rgba(0,0,0,.25); }
+    button:active{ transform: translateY(0); }
+    button[disabled]{ opacity:.6; cursor:not-allowed; }
+
+    /* Primary CTA variant */
+    #btnPkg{
+      background: linear-gradient(180deg, #1fb86a, #129a56);
+      border-color: #1e8449;
+      color:#042513;
+      font-weight:600;
+    }
+
+    /* Helper notes */
+    .note{ color:var(--muted); font-size:12px; margin-top:6px; }
   </style>
 </head>
 <body>
-  <main>
-    <h1>HH Lender Docs Filler</h1>
-    <p id="status" class="muted">Loading payload…</p>
+  <div class="wrap">
+    <main>
+      <header>
+        <h1>HH Lender Docs Filler</h1>
+        <p class="sub">Fill lender docs in-browser • No uploads • Secure</p>
+      </header>
 
-    <label>Lender</label>
-    <select id="lender"></select>
+      <p id="status" class="muted">Loading payload…</p>
 
-    <label>Package Type</label>
-    <select id="pkg">
-      <option value="Standard">Standard</option>
-      <option value="HELOC">HELOC</option>
-    </select>
+      <div class="hr" role="separator"></div>
+      <p class="h2">Options</p>
 
-    <label>Upload Commitment (required)</label>
-    <input type="file" id="upCommitment" accept="application/pdf">
+      <!-- GRID: options + uploads -->
+      <div class="grid" aria-label="Form options and uploads">
+        <div class="field">
+          <label for="lender">Lender</label>
+          <select id="lender" aria-label="Lender"></select>
+        </div>
 
-    <label>Upload Application (required)</label>
-    <input type="file" id="upApplication" accept="application/pdf">
+        <div class="field">
+          <label for="pkg">Package Type</label>
+          <select id="pkg" aria-label="Package Type">
+            <option value="Standard">Standard</option>
+            <option value="HELOC">HELOC</option>
+          </select>
+        </div>
 
-    <label>Upload MPP (optional)</label>
-    <input type="file" id="upMPP" accept="application/pdf">
+        <div class="field">
+          <label for="upCommitment">Upload Commitment (required)</label>
+          <input type="file" id="upCommitment" accept="application/pdf" />
+        </div>
 
-    <div id="apaWrap">
-      <label>Upload APA (TD only)</label>
-      <input type="file" id="upAPA" accept="application/pdf">
-    </div>
+        <div class="field">
+          <label for="upApplication">Upload Application (required)</label>
+          <input type="file" id="upApplication" accept="application/pdf" />
+        </div>
 
-    <label>Manual JSON (optional)</label>
-    <textarea id="manualJson" rows="6" placeholder='{"Contact_Name":"Ryan Smith","Lender_Name":"TD"}'></textarea>
+        <div class="field">
+          <label for="upMPP">Upload MPP (optional)</label>
+          <input type="file" id="upMPP" accept="application/pdf" />
+        </div>
 
-    <div style="margin-top:16px">
-      <button id="btnPkg">Build Signing Package</button>
-      <button id="btnSingles">Generate Editable Singles</button>
-      <button id="btnInfo">Create Info Cover Page</button>
-    </div>
-  </main>
+        <div class="field" id="apaWrap">
+          <label for="upAPA">Upload APA (TD only)</label>
+          <input type="file" id="upAPA" accept="application/pdf" />
+        </div>
 
-  <!-- Dynamic loader so the correct app.js path is found automatically -->
+        <div class="field" style="grid-column:1 / -1">
+          <label for="manualJson">Manual JSON (optional)</label>
+          <textarea id="manualJson" rows="6" placeholder='{"Contact_Name":"Ryan Smith","Lender_Name":"TD"}'></textarea>
+          <div class="note">Tip: Launching from CRM pre-fills this automatically. You can paste JSON here if needed.</div>
+        </div>
+      </div>
+
+      <div class="hr" role="separator"></div>
+      <p class="h2">Actions</p>
+
+      <div class="btnbar">
+        <button id="btnPkg" type="button" title="Build Signing Package">Build Signing Package</button>
+        <button id="btnSingles" type="button" title="Generate Editable Singles">Generate Editable Singles</button>
+        <button id="btnInfo" type="button" title="Create Info Cover Page">Create Info Cover Page</button>
+      </div>
+    </main>
+  </div>
+
+  <!-- Dynamic loader so the correct app.js path is found automatically (unchanged) -->
   <script>
     (function(){
       const parts = location.pathname.split('/').filter(Boolean);
