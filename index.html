@@ -161,6 +161,18 @@
 
     /* Helper notes */
     .note{ color:var(--muted); font-size:12px; margin-top:6px; }
+   
+    /* Prevent file inputs from overflowing their container */
+input[type=file] {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+}
+
+/* Keep grid and flex children from expanding unevenly */
+.two > div {
+  min-width: 0;
+}
   </style>
 </head>
 <body>
