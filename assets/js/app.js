@@ -224,17 +224,23 @@ function computeCOB(record){
   const termYears = nnum(termM)/12 || 1;
   const avgPrincipal = (P + Bal) / 2 || P;
   const APR = (avgPrincipal > 0)
-    ? 100 * ((totalCOB) / (termYears * avgPrincipal))
+    ? 100 * (totalCOB / (termYears * avgPrincipal))
     : 0;
+
+  // Guard rails: never below contract; bump by 0.01 if fees exist and rounding hits contract
+  let aprNum = Math.round(APR * 100) / 100;
+  const contract = nnum(nomPct);
+  if (aprNum < contract) aprNum = contract;
+  if (totalFees > 0 && aprNum <= contract) aprNum = contract + 0.01;
 
   return {
     ...checkboxStates,
-    "Mtg_Pmt_Amount": money(A),
-    "Balance_Calc": money(Bal),
+    "Mtg_Pmt_Amount":         money(A),
+    "Balance_Calc":           money(Bal),
     "Total_Interest_To_Term": money(interestToTerm),
-    "Total_Fees_Calc": money(totalFees),
-    "Total_COB_Calc": money(totalCOB),
-    "APR_Calc": (Math.round(APR*100)/100).toFixed(2)
+    "Total_Fees_Calc":        money(totalFees),
+    "Total_COB_Calc":         money(totalCOB),
+    "APR_Calc":               aprNum.toFixed(2)
   };
 }
 
