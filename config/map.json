@@ -29,8 +29,6 @@
     "Lenders_Lawyer_Fees": "Lender_Lawyer",
     "Maturity_Date": "Maturity_Date",
     "Total_Mortgage_Amount_incl_Insurance": "Mortgage Amount",
-    "Finders_Fee": "Mortgage_Basic_Comp",
-    "Lender_Mortgage_Number": "Mortgage Number",
     "Current_Rate": "Mortgage_Rate",
     "Amortization_Years": "Mtg_Amortization",
     "Payment_Amount": "Mtg_Pmt_Amount",
@@ -43,7 +41,7 @@
     "Province": "PropertyProvince",
     "Rate_Type": "Rate_Type",
     "COF_Date": "Subject Removal Date",
-    "Term_Months": "Term_Years",
+    "Term_Years": "Term_Months",
     "Title_Insurance": "Title_Insurance",
     "Volume_Bonus_BPS_NEW": "Volume BPS",
     "Volume_Bonus": "Volume_Bonus_Comp"
