@@ -360,27 +360,102 @@ async function downloadZip(namedBytes) {
   document.body.appendChild(a); a.click(); a.remove();
 }
 
-async function makeInfoCoverPdf(record) {
-  const doc = await PDFLib.PDFDocument.create();
-  const page = doc.addPage([595, 842]);
-  const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
-  const fontB = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
-  let y = 800;
-  function line(lbl, val) {
-    page.drawText(lbl, { x: 40, y, size: 11, font: fontB });
-    page.drawText(String(val || ""), { x: 200, y, size: 11, font });
-    y -= 18;
+// Pass in the Zoho payload (record) and your map.__default
+// e.g. await makeInfoCoverPdf(window.state.payload, MAP.__default)
+async function makeInfoCoverPdf(record, mapDefault) {
+  const { PDFDocument, StandardFonts, rgb } = PDFLib;
+
+  // --- helpers ---
+  const toStr = v => (v === null || v === undefined || v === "" ? "(blank)" : String(v));
+  const isBlank = v => v === "(blank)";
+  const trimCell = (s, max) => {
+    const str = String(s || "");
+    return str.length > max ? str.slice(0, max - 1) + "…" : str;
+  };
+
+  // Light transforms so preview matches how you'll actually fill
+  const values = { ...record };
+  if (!values.Term_Months && values.Term_Years) values.Term_Months = Number(values.Term_Years) * 12;
+
+  // Build rows from map (Zoho Key -> PDF Field -> Value)
+  const rows = [];
+  for (const [zohoKey, pdfField] of Object.entries(mapDefault || {})) {
+    const val = toStr(values[zohoKey]);
+    rows.push({ zohoKey, pdfField, val, blank: isBlank(val) });
   }
-  page.drawText("HH - Info Cover Page", { x: 40, y, size: 16, font: fontB }); y -= 28;
-  line("Deal / File Name:", record.Deal_Name || record.Name);
-  line("Contact Name:", record.Contact_Name);
-  line("Lender:", record.Lender_Name);
-  line("Address:", [record.Street, record.City, record.Province, record.Postal_Code].filter(Boolean).join(", "));
-  line("Closing Date:", record.Closing_Date);
-  line("COF Date:", record.COF_Date);
-  line("Total Mtg Amt (incl. ins.):", record.Total_Mortgage_Amount_incl_Insurance);
-  line("Email (B1):", record.Email);
-  line("Email (B2):", record.Contact_Email_2);
+  // Add any extra payload keys (unmapped) to catch misses
+  for (const k of Object.keys(values || {})) {
+    if (!(k in (mapDefault || {}))) {
+      const val = toStr(values[k]);
+      rows.push({ zohoKey: `${k} (unmapped)`, pdfField: "—", val, blank: isBlank(val) });
+    }
+  }
+
+  // --- PDF setup ---
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const fontB = await doc.embedFont(StandardFonts.HelveticaBold);
+
+  // A4-like (your original 595×842). Adjust if you prefer Letter.
+  const pageSize = [595, 842];
+  const margin = 36;
+  const colX = { key: margin, map: margin + 210, val: margin + 380 };
+  const lineH = 14;
+
+  let page = doc.addPage(pageSize);
+  let y = pageSize[1] - margin;
+
+  // --- header block (same as yours, kept at the top) ---
+  const address = [values.Street, values.City, values.Province, values.Postal_Code].filter(Boolean).join(", ");
+  page.drawText("HH - Info Cover Page", { x: margin, y, size: 16, font: fontB }); y -= 24;
+  const headerLines = [
+    ["Deal / File Name:", values.Deal_Name || values.Name],
+    ["Contact Name:", values.Contact_Name],
+    ["Lender:", values.Lender_Name],
+    ["Address:", address],
+    ["Closing Date:", values.Closing_Date],
+    ["COF Date:", values.COF_Date],
+    ["Total Mtg Amt (incl. ins.):", values.Total_Mortgage_Amount_incl_Insurance],
+    ["Email (B1):", values.Email],
+    ["Email (B2):", values.Contact_Email_2],
+  ];
+  for (const [lbl, val] of headerLines) {
+    page.drawText(lbl, { x: margin, y, size: 11, font: fontB });
+    page.drawText(String(val || ""), { x: margin + 160, y, size: 11, font });
+    y -= 16;
+  }
+  y -= 6;
+
+  // --- table headers ---
+  const drawHeaders = () => {
+    page.drawText("Zoho Key", { x: colX.key, y, size: 11, font: fontB });
+    page.drawText("→ PDF Field", { x: colX.map, y, size: 11, font: fontB });
+    page.drawText("Value", { x: colX.val, y, size: 11, font: fontB });
+    y -= 12;
+  };
+  drawHeaders();
+
+  // --- rows, with multipage overflow ---
+  for (const r of rows) {
+    // add new page if needed
+    if (y < margin + 24) {
+      page = doc.addPage(pageSize);
+      y = pageSize[1] - margin;
+      page.drawText("HH - Info Cover Page (cont.)", { x: margin, y, size: 12, font: fontB });
+      y -= 18;
+      drawHeaders();
+    }
+
+    const keyTxt = trimCell(r.zohoKey, 40);
+    const mapTxt = "→ " + trimCell(r.pdfField, 28);
+    const valTxt = trimCell(r.val, 48);
+
+    page.drawText(keyTxt, { x: colX.key, y, size: 10, font });
+    page.drawText(mapTxt, { x: colX.map, y, size: 10, font });
+    page.drawText(valTxt, { x: colX.val, y, size: 10, font, color: r.blank ? rgb(0.65, 0, 0) : rgb(0, 0, 0) });
+    y -= lineH;
+  }
+
   const bytes = await doc.save({ updateFieldAppearances: true });
   return new Blob([bytes], { type: "application/pdf" });
 }
