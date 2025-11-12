@@ -606,10 +606,10 @@ async function makeInfoCoverPdf(record, mapDefault) {
       const rec = record || tryJSON(els.manualJson?.value?.trim()) || {};
       if (!Object.keys(rec).length) throw new Error("No record payload. Paste JSON or relaunch from CRM.");
       setStatus("Generating info cover page...", "muted");
-      const blob = await makeInfoCoverPdf(rec);
+      const blob = await makeInfoCoverPdf(rec, MAP.__default);
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = "Info Cover Page.pdf";
+      a.download = `HH_Data_Snapshot_${rec?.Lender_Name || 'Lender'}_${Date.now()}.pdf`;
       document.body.appendChild(a); a.click(); a.remove();
       setStatus("Info cover page downloaded.", "ok");
     } catch (e) {
