@@ -125,6 +125,18 @@ async function fetchPdfBytes(path) {
 }
 async function tryFetchPdfBytes(path) { try { return await fetchPdfBytes(path); } catch { return null; } }
 
+// Load map.json (Zoho field → PDF field mapping)
+let MAP = {};
+
+(async () => {
+  try {
+    MAP = await fetch("./config/map.json").then(r => r.json());
+    console.log("MAP loaded:", Object.keys(MAP.__default || {}).length, "fields");
+  } catch (err) {
+    console.error("Could not load map.json:", err);
+  }
+})();
+
 //////////////////////////
 // NUMBER + AMORTIZATION UTILS
 //////////////////////////
