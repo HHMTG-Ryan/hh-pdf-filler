@@ -447,7 +447,7 @@ async function makeInfoCoverPdf(record, mapDefault) {
     }
 
     const keyTxt = trimCell(r.zohoKey, 40);
-    const mapTxt = "→ " + trimCell(r.pdfField, 28);
+    const mapTxt = "-> " + trimCell(r.pdfField, 28);
     const valTxt = trimCell(r.val, 48);
 
     page.drawText(keyTxt, { x: colX.key, y, size: 10, font });
