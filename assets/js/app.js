@@ -44,7 +44,7 @@ const TEMPL_BASE  = `${REPO_BASE}data/templates/`;
 //////////////////////////
 // CONSTANTS
 //////////////////////////
-const LENDER_OPTIONS = ["TD","MCAP","CMLS","CWB","FirstNat","Haventree","Lendwise","Scotia","Strive","Bridgewater","Private"];
+const LENDER_OPTIONS = ["TD","MCAP","CMLS","BEEM","CWB","FirstNat","Haventree","Lendwise","Scotia","Strive","Bridgewater","Private"];
 
 const HEADER_INDEX = {
   WMB: 1,
