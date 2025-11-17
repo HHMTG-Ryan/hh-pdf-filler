@@ -509,7 +509,7 @@ async function makeInfoCoverPdf(record, mapDefault) {
 
       const lenderPrefix = els.lender.value;
       const pkgType = (els.pkg.value || "Standard").toLowerCase();
-      const headersPath = `${TEMPL_BASE}headers-signing-package.pdf`;
+      const headersPath = `${TEMPL_BASE}Headers-Signing-Package.pdf`;
       const upCommitmentBytes = await els.upCommitment.files[0].arrayBuffer();
       const upApplicationBytes = await els.upApplication.files[0].arrayBuffer();
       const upMPPBytes = els.upMPP?.files[0] ? await els.upMPP.files[0].arrayBuffer() : null;
