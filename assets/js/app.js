@@ -94,7 +94,7 @@ function lastNameFromContact(contactName) {
 }
 function inferLenderPrefix(lenderName) {
   const n = (lenderName || "").toLowerCase();
-  const candidates = ["td","mcap","cmls","cwb","firstnat","haventree","lendwise","scotia","strive","bridgewater","private"];
+  const candidates = ["td","mcap","cmls","beem","cwb","firstnat","haventree","lendwise","scotia","strive","bridgewater","private"];
   for (const c of candidates) if (n.includes(c)) return c.toUpperCase();
   if (n) return sanitizeName(n.split(/\s+/)[0]).toUpperCase();
   return "TD";
