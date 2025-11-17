@@ -203,13 +203,17 @@ function balanceAfter(P, nomPct, comp, freq, amortMonths, paidMonths, payAmount)
 //////////////////////////
 function computeCOB(record){
   const P        = nnum(record.Total_Mortgage_Amount_incl_Insurance || record["Mortgage Amount"]);
-  const nomPct   = nnum(record.Interest_Rate || record.Mortgage_Rate);
+  const nomPct   = nnum(record.Current_Rate || record.Mortgage_Rate);
   const comp     = record.Compounding || "Semi-Annual";
   const freq     = record.Payment_Frequency || record.Mtg_Pmt_Freq || "Monthly";
-  const termM    = nnum(record.Term_Months);
-  const amortM   = record.Mtg_Amortization ? nnum(record.Mtg_Amortization)
-                    : (record.Amortization ? nnum(record.Amortization)*12
-                    : nnum(record.Amortization_Years));
+const termM  = nnum(record.Term_Years || record.Term_Months || 0);          // months
+const amortM = nnum(
+  record.Mtg_Amortization ||
+  record.Amortization_Months ||
+  record.Amortization_Years ||   // misnamed, but contains months
+  record.Amortization ||         // if populated with months
+  0
+);
   const A_input  = record.Payment_Amount || record.Mtg_Pmt_Amount;
 
   const A = (A_input && nnum(A_input)>0) ? nnum(A_input)
