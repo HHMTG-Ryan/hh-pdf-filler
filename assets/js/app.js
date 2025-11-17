@@ -110,6 +110,16 @@ function populateLenderOptions(selected) {
     .join("");
 }
 
+// Replace non-WinAnsi chars with ASCII-safe versions for pdf-lib built-in fonts
+function safeText(s) {
+  const str = String(s ?? "");
+  return str
+    .replace(/\u2192/g, "->")              // arrows
+    .replace(/[\u2012\u2013\u2014\u2015]/g, "-") // dashes → hyphen
+    .replace(/\u2026/g, "...")             // ellipsis
+    .replace(/[^\x00-\x7F]/g, "");         // strip other non-ASCII
+}
+
 //////////////////////////
 // FETCH HELPERS
 //////////////////////////
@@ -127,7 +137,6 @@ async function tryFetchPdfBytes(path) { try { return await fetchPdfBytes(path); 
 
 // Load map.json (Zoho field → PDF field mapping)
 let MAP = {};
-
 (async () => {
   try {
     MAP = await fetch("./config/map.json").then(r => r.json());
@@ -372,8 +381,7 @@ async function downloadZip(namedBytes) {
   document.body.appendChild(a); a.click(); a.remove();
 }
 
-// Pass in the Zoho payload (record) and your map.__default
-// e.g. await makeInfoCoverPdf(window.state.payload, MAP.__default)
+// New: Info Cover Page that lists every mapped field + incoming value
 async function makeInfoCoverPdf(record, mapDefault) {
   const { PDFDocument, StandardFonts, rgb } = PDFLib;
 
@@ -381,8 +389,8 @@ async function makeInfoCoverPdf(record, mapDefault) {
   const toStr = v => (v === null || v === undefined || v === "" ? "(blank)" : String(v));
   const isBlank = v => v === "(blank)";
   const trimCell = (s, max) => {
-    const str = String(s || "");
-    return str.length > max ? str.slice(0, max - 1) + "…" : str;
+    const txt = safeText(String(s || ""));
+    return txt.length > max ? txt.slice(0, max - 3) + "..." : txt;
   };
 
   // Light transforms so preview matches how you'll actually fill
@@ -399,7 +407,7 @@ async function makeInfoCoverPdf(record, mapDefault) {
   for (const k of Object.keys(values || {})) {
     if (!(k in (mapDefault || {}))) {
       const val = toStr(values[k]);
-      rows.push({ zohoKey: `${k} (unmapped)`, pdfField: "—", val, blank: isBlank(val) });
+      rows.push({ zohoKey: `${k} (unmapped)`, pdfField: "-", val, blank: isBlank(val) });
     }
   }
 
@@ -419,7 +427,7 @@ async function makeInfoCoverPdf(record, mapDefault) {
 
   // --- header block (same as yours, kept at the top) ---
   const address = [values.Street, values.City, values.Province, values.Postal_Code].filter(Boolean).join(", ");
-  page.drawText("HH - Info Cover Page", { x: margin, y, size: 16, font: fontB }); y -= 24;
+  page.drawText(safeText("HH - Info Cover Page"), { x: margin, y, size: 16, font: fontB }); y -= 24;
   const headerLines = [
     ["Deal / File Name:", values.Deal_Name || values.Name],
     ["Contact Name:", values.Contact_Name],
@@ -432,17 +440,17 @@ async function makeInfoCoverPdf(record, mapDefault) {
     ["Email (B2):", values.Contact_Email_2],
   ];
   for (const [lbl, val] of headerLines) {
-    page.drawText(lbl, { x: margin, y, size: 11, font: fontB });
-    page.drawText(String(val || ""), { x: margin + 160, y, size: 11, font });
+    page.drawText(safeText(lbl), { x: margin, y, size: 11, font: fontB });
+    page.drawText(safeText(String(val || "")), { x: margin + 160, y, size: 11, font });
     y -= 16;
   }
   y -= 6;
 
   // --- table headers ---
   const drawHeaders = () => {
-    page.drawText("Zoho Key", { x: colX.key, y, size: 11, font: fontB });
-    page.drawText("→ PDF Field", { x: colX.map, y, size: 11, font: fontB });
-    page.drawText("Value", { x: colX.val, y, size: 11, font: fontB });
+    page.drawText(safeText("Zoho Key"), { x: colX.key, y, size: 11, font: fontB });
+    page.drawText(safeText("-> PDF Field"), { x: colX.map, y, size: 11, font: fontB });
+    page.drawText(safeText("Value"), { x: colX.val, y, size: 11, font: fontB });
     y -= 12;
   };
   drawHeaders();
@@ -453,7 +461,7 @@ async function makeInfoCoverPdf(record, mapDefault) {
     if (y < margin + 24) {
       page = doc.addPage(pageSize);
       y = pageSize[1] - margin;
-      page.drawText("HH - Info Cover Page (cont.)", { x: margin, y, size: 12, font: fontB });
+      page.drawText(safeText("HH - Info Cover Page (cont.)"), { x: margin, y, size: 12, font: fontB });
       y -= 18;
       drawHeaders();
     }
@@ -462,9 +470,9 @@ async function makeInfoCoverPdf(record, mapDefault) {
     const mapTxt = "-> " + trimCell(r.pdfField, 28);
     const valTxt = trimCell(r.val, 48);
 
-    page.drawText(keyTxt, { x: colX.key, y, size: 10, font });
-    page.drawText(mapTxt, { x: colX.map, y, size: 10, font });
-    page.drawText(valTxt, { x: colX.val, y, size: 10, font, color: r.blank ? rgb(0.65, 0, 0) : rgb(0, 0, 0) });
+    page.drawText(safeText(keyTxt), { x: colX.key, y, size: 10, font });
+    page.drawText(safeText(mapTxt), { x: colX.map, y, size: 10, font });
+    page.drawText(safeText(valTxt), { x: colX.val, y, size: 10, font, color: r.blank ? rgb(0.65, 0, 0) : rgb(0, 0, 0) });
     y -= lineH;
   }
 
@@ -501,7 +509,7 @@ async function makeInfoCoverPdf(record, mapDefault) {
 
       const lenderPrefix = els.lender.value;
       const pkgType = (els.pkg.value || "Standard").toLowerCase();
-      const headersPath = `${TEMPL_BASE}${manifest.headers_pdf}`;
+      const headersPath = `${TEMPL_BASE}headers-signing-package.pdf`;
       const upCommitmentBytes = await els.upCommitment.files[0].arrayBuffer();
       const upApplicationBytes = await els.upApplication.files[0].arrayBuffer();
       const upMPPBytes = els.upMPP?.files[0] ? await els.upMPP.files[0].arrayBuffer() : null;
