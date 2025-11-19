@@ -33,6 +33,16 @@ function setStatus(msg, cls = "muted") {
   els.status.textContent = msg;
 }
 
+// Small UX helper to prevent double-clicks and show progress text
+async function withBusy(btn, runningLabel, fn){
+  if (!btn) return fn();
+  const prev = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = runningLabel;
+  try { return await fn(); }
+  finally { btn.disabled = false; btn.textContent = prev; }
+}
+
 //////////////////////////
 // PATHS
 //////////////////////////
@@ -74,11 +84,20 @@ function readFromQuery() {
     let raw = p.get("data");
     if (!raw) return null;
     raw = decodeURIComponent(raw.trim());
-    return tryJSON(atob(b64urlToB64(raw)));
+    const decoded = atob(b64urlToB64(raw));
+    const parsed = tryJSON(decoded);
+    if (!parsed) throw new Error("Payload invalid or truncated—relaunch from CRM.");
+    return parsed;
   } catch { return null; }
 }
 function readFromWindowName() {
-  try { if (!window.name) return null; return tryJSON(atob(b64urlToB64(window.name))); } catch { return null; }
+  try {
+    if (!window.name) return null;
+    const decoded = atob(b64urlToB64(window.name));
+    const parsed = tryJSON(decoded);
+    if (!parsed) throw new Error("Payload invalid or truncated—relaunch from CRM.");
+    return parsed;
+  } catch { return null; }
 }
 
 //////////////////////////
@@ -120,6 +139,9 @@ function safeText(s) {
     .replace(/[^\x00-\x7F]/g, "");         // strip other non-ASCII
 }
 
+// Tiny helper for blanks
+function isBlank(v){ return v === undefined || v === null || String(v).trim() === ""; }
+
 //////////////////////////
 // FETCH HELPERS
 //////////////////////////
@@ -135,14 +157,18 @@ async function fetchPdfBytes(path) {
 }
 async function tryFetchPdfBytes(path) { try { return await fetchPdfBytes(path); } catch { return null; } }
 
-// Load map.json (Zoho field → PDF field mapping)
+// Load map.json (Zoho field → PDF field mapping) – tolerate flat or {__default:{...}}
 let MAP = {};
 (async () => {
   try {
-    MAP = await fetch("./config/map.json").then(r => r.json());
+    const raw = await fetch("./config/map.json", { cache: "no-store" }).then(r => r.json());
+    MAP = raw && typeof raw === "object"
+      ? (raw.__default ? raw : { __default: raw })
+      : { __default: {} };
     console.log("MAP loaded:", Object.keys(MAP.__default || {}).length, "fields");
   } catch (err) {
     console.error("Could not load map.json:", err);
+    MAP = { __default: {} };
   }
 })();
 
@@ -156,12 +182,24 @@ function nnum(v){
 }
 function money(v){ return (Math.round(nnum(v)*100)/100).toFixed(2); }
 
+// Explicit map first; then safe fallbacks
 function ppy(freq){
-  const t = (freq || "").toLowerCase();
-  if (t.includes("weekly")) return 52;
-  if (t.includes("semi-month")) return 24;
+  const t = (freq || "").trim().toLowerCase();
+  const exact = {
+    "monthly": 12,
+    "semi-monthly": 24,
+    "semi monthly": 24,
+    "bi-weekly": 26,
+    "biweekly": 26,
+    "accelerated bi-weekly": 26,
+    "accelerated biweekly": 26,
+    "weekly": 52
+  };
+  if (t in exact) return exact[t];
   if (t.includes("accelerat")) return 26;
   if (t.includes("bi")) return 26;
+  if (t.includes("semi-month")) return 24;
+  if (t.includes("week")) return 52;
   if (t.includes("month")) return 12;
   return 12;
 }
@@ -206,14 +244,15 @@ function computeCOB(record){
   const nomPct   = nnum(record.Current_Rate || record.Mortgage_Rate);
   const comp     = record.Compounding || "Semi-Annual";
   const freq     = record.Payment_Frequency || record.Mtg_Pmt_Freq || "Monthly";
-const termM  = nnum(record.Term_Years || record.Term_Months || 0);          // months
-const amortM = nnum(
-  record.Mtg_Amortization ||
-  record.Amortization_Months ||
-  record.Amortization_Years ||   // misnamed, but contains months
-  record.Amortization ||         // if populated with months
-  0
-);
+  // Always months from Zoho (even if API names say "Years")
+  const termM  = nnum(record.Term_Years || record.Term_Months || 0);
+  const amortM = nnum(
+    record.Mtg_Amortization ||
+    record.Amortization_Months ||
+    record.Amortization_Years ||
+    record.Amortization ||
+    0
+  );
   const A_input  = record.Payment_Amount || record.Mtg_Pmt_Amount;
 
   const A = (A_input && nnum(A_input)>0) ? nnum(A_input)
@@ -278,15 +317,20 @@ function normalize(v) {
   return String(v);
 }
 
-async function fillTemplateBytes(templatePath, record, map) {
-  const bytes = await fetchPdfBytes(templatePath);
+async function fillTemplateBytes(templatePath, record, map, preloadedBytes) {
+  // existence check (Q2)
+  const bytes = preloadedBytes || await fetchPdfBytes(templatePath);
   const pdfDoc = await PDFLib.PDFDocument.load(bytes);
   const form = pdfDoc.getForm?.();
   const fields = form?.getFields?.() || [];
-  const fieldNames = new Set(fields.map(f => { try { return f.getName(); } catch { return ""; } }).filter(Boolean));
 
+  // Q3: friendlier message + clean fallback
+  if (!fields.length) {
+    throw new Error("Template appears flattened/XFA (no AcroForm fields).");
+  }
+
+  const fieldNames = new Set(fields.map(f => { try { return f.getName(); } catch { return ""; } }).filter(Boolean));
   dbg(`Template ${templatePath}: found ${fieldNames.size} form fields`);
-  if (!fieldNames.size) throw new Error("No AcroForm fields detected (flattened or XFA template?)");
 
   const usedMap = map && (map.__default || map) || {};
   let hits = 0, misses = 0;
@@ -305,7 +349,7 @@ async function fillTemplateBytes(templatePath, record, map) {
       const field = form.getField(pdfField);
       const type = field.constructor.name;
       if (type === "PDFCheckBox") {
-        /^(yes|true|1|x)$/i.test(String(val)) ? field.check() : field.uncheck();
+        /^(yes|true|1|x)$/i.test(String(val)) ? field.check() : field.uncheck(); // unchanged per your choice
       } else if (type === "PDFDropdown") {
         try { field.select(v); } catch { field.setText(v); }
       } else if (type === "PDFRadioGroup") {
@@ -348,7 +392,7 @@ async function mergeDocsFlattened(listOfBytes) {
 }
 
 async function makeHeaderPageBytes(headersPdfPath, headerIndex1Based) {
-  const headersBytes = await fetchPdfBytes(headersPdfPath);
+  const headersBytes = await fetchPdfBytes(headersPdfPath); // Q2 existence check happens here
   const src = await PDFLib.PDFDocument.load(headersBytes);
   const out = await PDFLib.PDFDocument.create();
   const [page] = await out.copyPages(src, [headerIndex1Based - 1]);
@@ -359,15 +403,15 @@ async function makeHeaderPageBytes(headersPdfPath, headerIndex1Based) {
 //////////////////////////
 // GLOBAL MAP-AWARE ADDER
 //////////////////////////
-async function addTemplateToMerge(relPath, record, fieldMap, bucket) {
+async function addTemplateToMerge(relPath, record, fieldMap, bucket, preloadedBytes) {
   const fullPath = `${TEMPL_BASE}${relPath}`;
   try {
     const rec2 = /COB/i.test(relPath) ? { ...record, ...computeCOB(record) } : record;
-    const filled = await fillTemplateBytes(fullPath, rec2, fieldMap);
+    const filled = await fillTemplateBytes(fullPath, rec2, fieldMap, preloadedBytes);
     bucket.push(filled);
   } catch (err) {
     dwarn(`Could not fill ${relPath}, using static version instead: ${err.message}`);
-    const bytes = await fetchPdfBytes(fullPath);
+    const bytes = preloadedBytes || await fetchPdfBytes(fullPath);
     bucket.push(bytes);
   }
 }
@@ -385,42 +429,36 @@ async function downloadZip(namedBytes) {
   document.body.appendChild(a); a.click(); a.remove();
 }
 
-// New: Info Cover Page that lists every mapped field + incoming value
+// Info Cover Page (unchanged display re: months per your choice)
 async function makeInfoCoverPdf(record, mapDefault) {
   const { PDFDocument, StandardFonts, rgb } = PDFLib;
 
-  // --- helpers ---
   const toStr = v => (v === null || v === undefined || v === "" ? "(blank)" : String(v));
-  const isBlank = v => v === "(blank)";
+  const isBlankVal = v => v === "(blank)";
   const trimCell = (s, max) => {
     const txt = safeText(String(s || ""));
     return txt.length > max ? txt.slice(0, max - 3) + "..." : txt;
   };
 
-  // Light transforms so preview matches how you'll actually fill
   const values = { ...record };
-  if (!values.Term_Months && values.Term_Years) values.Term_Months = Number(values.Term_Years) * 12;
+  // (You chose not to alter months/years display here.)
 
-  // Build rows from map (Zoho Key -> PDF Field -> Value)
   const rows = [];
   for (const [zohoKey, pdfField] of Object.entries(mapDefault || {})) {
     const val = toStr(values[zohoKey]);
-    rows.push({ zohoKey, pdfField, val, blank: isBlank(val) });
+    rows.push({ zohoKey, pdfField, val, blank: isBlankVal(val) });
   }
-  // Add any extra payload keys (unmapped) to catch misses
   for (const k of Object.keys(values || {})) {
     if (!(k in (mapDefault || {}))) {
       const val = toStr(values[k]);
-      rows.push({ zohoKey: `${k} (unmapped)`, pdfField: "-", val, blank: isBlank(val) });
+      rows.push({ zohoKey: `${k} (unmapped)`, pdfField: "-", val, blank: isBlankVal(val) });
     }
   }
 
-  // --- PDF setup ---
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const fontB = await doc.embedFont(StandardFonts.HelveticaBold);
 
-  // A4-like (your original 595×842). Adjust if you prefer Letter.
   const pageSize = [595, 842];
   const margin = 36;
   const colX = { key: margin, map: margin + 210, val: margin + 380 };
@@ -429,7 +467,6 @@ async function makeInfoCoverPdf(record, mapDefault) {
   let page = doc.addPage(pageSize);
   let y = pageSize[1] - margin;
 
-  // --- header block (same as yours, kept at the top) ---
   const address = [values.Street, values.City, values.Province, values.Postal_Code].filter(Boolean).join(", ");
   page.drawText(safeText("HH - Info Cover Page"), { x: margin, y, size: 16, font: fontB }); y -= 24;
   const headerLines = [
@@ -450,7 +487,6 @@ async function makeInfoCoverPdf(record, mapDefault) {
   }
   y -= 6;
 
-  // --- table headers ---
   const drawHeaders = () => {
     page.drawText(safeText("Zoho Key"), { x: colX.key, y, size: 11, font: fontB });
     page.drawText(safeText("-> PDF Field"), { x: colX.map, y, size: 11, font: fontB });
@@ -459,9 +495,7 @@ async function makeInfoCoverPdf(record, mapDefault) {
   };
   drawHeaders();
 
-  // --- rows, with multipage overflow ---
   for (const r of rows) {
-    // add new page if needed
     if (y < margin + 24) {
       page = doc.addPage(pageSize);
       y = pageSize[1] - margin;
@@ -469,7 +503,6 @@ async function makeInfoCoverPdf(record, mapDefault) {
       y -= 18;
       drawHeaders();
     }
-
     const keyTxt = trimCell(r.zohoKey, 40);
     const mapTxt = "-> " + trimCell(r.pdfField, 28);
     const valTxt = trimCell(r.val, 48);
@@ -488,13 +521,32 @@ async function makeInfoCoverPdf(record, mapDefault) {
 // MAIN
 //////////////////////////
 (async function run() {
+  // Startup guards
+  if (!window.PDFLib) { setStatus("PDFLib not loaded. Include pdf-lib before app.js.", "err"); throw new Error("PDFLib missing"); }
+  if (!window.JSZip)  { setStatus("JSZip not loaded. Include jszip before app.js.", "err");  throw new Error("JSZip missing"); }
+
   setStatus("Loading payload...");
   let record = readFromQuery() || readFromWindowName();
   if (!record && els.manualJson?.value?.trim()) record = tryJSON(els.manualJson.value.trim());
 
+  // NEW: default First_Payment_Date text ONLY if payload missing
+  if (record && isBlank(record.First_Payment_Date)) {
+    record.First_Payment_Date = "See Lender Commitment";
+  }
+
+  // Manifest (safe defaults/guards)
   const manifest = await fetchJson(`${CONFIG_BASE}standard_pkg.json`);
+  const sequence = Array.isArray(manifest.sequence) ? manifest.sequence : [];
+  const prosprFallback = manifest.prospr_fallback || "PROSPR.pdf";
+
+  // Map (normalized above); also allow local override for Singles
   let fieldMap = {};
-  try { fieldMap = await fetchJson(`${CONFIG_BASE}map.json`); } catch { fieldMap = {}; }
+  try {
+    const rawMap = await fetchJson(`${CONFIG_BASE}map.json`);
+    fieldMap = rawMap && typeof rawMap === "object"
+      ? (rawMap.__default ? rawMap : { __default: rawMap })
+      : { __default: {} };
+  } catch { fieldMap = { __default: {} }; }
 
   const detected = inferLenderPrefix(record?.Lender_Name || "");
   populateLenderOptions(detected || "TD");
@@ -503,7 +555,7 @@ async function makeInfoCoverPdf(record, mapDefault) {
   els.lender?.addEventListener("change", refreshAPA);
 
   // ---- Build Signing Package ----
-  els.btnPkg?.addEventListener("click", async () => {
+  els.btnPkg?.addEventListener("click", () => withBusy(els.btnPkg, "Building…", async () => {
     try {
       if (!record && els.manualJson?.value?.trim()) record = tryJSON(els.manualJson.value.trim());
       if (!record) throw new Error("No record payload. Paste JSON or launch from CRM.");
@@ -514,6 +566,11 @@ async function makeInfoCoverPdf(record, mapDefault) {
       const lenderPrefix = els.lender.value;
       const pkgType = (els.pkg.value || "Standard").toLowerCase();
       const headersPath = `${TEMPL_BASE}Headers-Signing-Package.pdf`;
+
+      // Verify headers exist now (faster fail)
+      const headersProbe = await tryFetchPdfBytes(headersPath);
+      if (!headersProbe) throw new Error(`Missing required header file: ${headersPath}`);
+
       const upCommitmentBytes = await els.upCommitment.files[0].arrayBuffer();
       const upApplicationBytes = await els.upApplication.files[0].arrayBuffer();
       const upMPPBytes = els.upMPP?.files[0] ? await els.upMPP.files[0].arrayBuffer() : null;
@@ -527,15 +584,18 @@ async function makeInfoCoverPdf(record, mapDefault) {
       }
       async function pushBytes(bytes) { toMerge.push(bytes); }
 
-      for (const spec of manifest.sequence) {
-        if (spec.condition === "lender_has_TD" && !isTD(lenderPrefix)) continue;
-        if (spec.condition === "package_is_HELOC" && pkgType !== "heloc") continue;
-        if (spec.condition === "package_is_STANDARD" && pkgType !== "standard") continue;
+      for (const s of sequence) {
+        const spec = s && typeof s === "object" ? s : {};
+        const cond = spec.condition || "";
+        if (cond === "lender_has_TD" && !isTD(lenderPrefix)) continue;
+        if (cond === "package_is_HELOC" && pkgType !== "heloc") continue;
+        if (cond === "package_is_STANDARD" && pkgType !== "standard") continue;
+
         if (spec.no_header !== true && spec.header) await pushHeader(spec.header);
 
         if (spec.doc_if_upload || spec.doc_if_missing) {
           if (upMPPBytes) await pushBytes(upMPPBytes);
-          else await addTemplateToMerge(manifest.prospr_fallback, record, fieldMap, toMerge);
+          else await addTemplateToMerge(prosprFallback, record, fieldMap, toMerge);
           continue;
         }
         if (spec.doc === "UPLOAD_Commitment.pdf") { await pushBytes(upCommitmentBytes); continue; }
@@ -545,21 +605,31 @@ async function makeInfoCoverPdf(record, mapDefault) {
         if (spec.doc && spec.doc.startsWith("LENDER_")) {
           const suffix = spec.doc.replace(/^LENDER_/, "");
           const rel = `${lenderFile(lenderPrefix, suffix)}`;
-          const exists = await tryFetchPdfBytes(`${TEMPL_BASE}${rel}`);
-          if (!exists) {
+          const path = `${TEMPL_BASE}${rel}`;
+          const preload = await tryFetchPdfBytes(path); // probe and reuse
+          if (!preload) {
             if (spec.optional) continue;
-            throw new Error(`Missing required lender doc: ${rel}`);
+            throw new Error(`Missing required lender doc for ${lenderPrefix}: ${rel}`);
           }
-          await addTemplateToMerge(rel, record, fieldMap, toMerge);
+          await addTemplateToMerge(rel, record, fieldMap, toMerge, preload);
           continue;
         }
 
-        await addTemplateToMerge(spec.doc, record, fieldMap, toMerge);
+        if (spec.doc) {
+          // normal template
+          await addTemplateToMerge(spec.doc, record, fieldMap, toMerge);
+        }
       }
 
       const merged = await mergeDocsFlattened(toMerge);
       const lastName = lastNameFromContact(record?.Contact_Name || "");
-      const outName = `${lastName} - Signing Pkg.pdf`;
+
+      // File name: LastName - Signing Package - YYYYMMDD.pdf
+      const d = new Date();
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth()+1).padStart(2,"0");
+      const dd = String(d.getDate()).padStart(2,"0");
+      const outName = `${lastName} - Signing Package - ${yyyy}${mm}${dd}.pdf`;
 
       const blob = new Blob([merged], { type: "application/pdf" });
       const a = document.createElement("a");
@@ -573,43 +643,48 @@ async function makeInfoCoverPdf(record, mapDefault) {
       setStatus(`Error: ${e.message}`, "err");
       alert(e.message);
     }
-  });
+  }));
 
   // ---- Editable Singles ----
-  els.btnSingles?.addEventListener("click", async () => {
+  els.btnSingles?.addEventListener("click", () => withBusy(els.btnSingles, "Generating…", async () => {
     try {
       if (!record && els.manualJson?.value?.trim()) record = tryJSON(els.manualJson.value.trim());
       if (!record) throw new Error("No record payload. Paste JSON or relaunch from CRM.");
       setStatus("Generating editable singles...", "muted");
-      let localMap = {};
-      try { localMap = await fetchJson(`${CONFIG_BASE}map.json`); } catch {}
+
+      // Local map already normalized above
+      const localMap = fieldMap;
 
       const lenderPrefix = els.lender.value;
       const singles = [];
 
-      // KYC/IDV
+      // KYC/IDV (required)
       {
         const path = `${TEMPL_BASE}KYC_IDV_Template.pdf`;
-        const filled = await fillTemplateBytes(path, record, localMap);
+        const probe = await tryFetchPdfBytes(path);
+        if (!probe) throw new Error(`Missing required template: ${path}`);
+        const filled = await fillTemplateBytes(path, record, localMap, probe);
         singles.push({ name: "Identification Verification.pdf", bytes: filled });
       }
 
-      // FCT Auth
+      // FCT Auth (optional)
       {
-        const path = `${TEMPL_BASE}${lenderFile(lenderPrefix, "FCT_Auth.pdf")}`;
+        const rel = `${lenderFile(lenderPrefix, "FCT_Auth.pdf")}`;
+        const path = `${TEMPL_BASE}${rel}`;
         const exists = await tryFetchPdfBytes(path);
         if (exists) {
-          const filled = await fillTemplateBytes(path, record, localMap);
+          const filled = await fillTemplateBytes(path, record, localMap, exists);
           singles.push({ name: "FCT Authorization.pdf", bytes: filled });
         }
       }
 
-      // Gift Letter
+      // Gift Letter (optional)
       {
-        const path = `${TEMPL_BASE}${lenderFile(lenderPrefix, "Gift_Letter.pdf")}`;
+        const rel = `${lenderFile(lenderPrefix, "Gift_Letter.pdf")}`;
+        const path = `${TEMPL_BASE}${rel}`;
         const exists = await tryFetchPdfBytes(path);
         if (exists) {
-          const filled = await fillTemplateBytes(path, record, localMap);
+          const filled = await fillTemplateBytes(path, record, localMap, exists);
           singles.push({ name: "Gift Letter.pdf", bytes: filled });
         }
       }
@@ -622,10 +697,10 @@ async function makeInfoCoverPdf(record, mapDefault) {
       setStatus(`Error: ${e.message}`, "err");
       alert(e.message);
     }
-  });
+  }));
 
   // ---- Info Cover Page ----
-  els.btnInfo?.addEventListener("click", async () => {
+  els.btnInfo?.addEventListener("click", () => withBusy(els.btnInfo, "Generating…", async () => {
     try {
       const rec = record || tryJSON(els.manualJson?.value?.trim()) || {};
       if (!Object.keys(rec).length) throw new Error("No record payload. Paste JSON or relaunch from CRM.");
@@ -641,10 +716,11 @@ async function makeInfoCoverPdf(record, mapDefault) {
       setStatus(`Error: ${e.message}`, "err");
       alert(e.message);
     }
-  });
+  }));
 
   populateLenderOptions(detected || "TD");
   if (els.pkg && !els.pkg.value) els.pkg.value = "Standard";
+
   setStatus(
     record
       ? `Payload OK. Lender approx ${detected || "TD"}. Choose options and upload files.`
