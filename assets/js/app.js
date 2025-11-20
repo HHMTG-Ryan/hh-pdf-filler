@@ -246,76 +246,68 @@ function computeCOB(record) {
   const comp     = (record.Compounding || "Semi-Annual").trim();
   const freq     = (record.Payment_Frequency || record.Mtg_Pmt_Freq || "Monthly").trim();
 
-  // Terms always in months from Zoho
-  const termM    = nnum(record.Term_Months || record.Term_Years || 0);
-  const amortM   = nnum(
+  const termM  = nnum(record.Term_Months || record.Term_Years || 0);
+  const amortM = nnum(
     record.Mtg_Amortization ||
     record.Amortization_Months ||
     record.Amortization_Years ||
-    record.Amortization ||
-    0
+    record.Amortization
   );
 
-  // Payment amount—use provided OR calculate fresh
-  const A_input  = record.Payment_Amount || record.Mtg_Pmt_Amount;
-  const A        = (A_input && nnum(A_input) > 0)
+  const A_input = record.Payment_Amount || record.Mtg_Pmt_Amount;
+  const A = (A_input && nnum(A_input) > 0)
     ? nnum(A_input)
     : paymentFor(P, nomPct, comp, freq, amortM);
 
-  // ---- Core Period Math ----
   const periodsPerYear = ppy(freq);
-  const r = perPeriodRate(nomPct, comp, freq);   // effective rate per payment
+  const r = perPeriodRate(nomPct, comp, freq);
+  const N_term  = Math.round((termM / 12) * periodsPerYear);
 
-  const N_amort = Math.round((amortM / 12) * periodsPerYear);
-  const N_term  = Math.round((termM  / 12) * periodsPerYear);
-
-  // ---- Balance at maturity (match Acrobat logic exactly) ----
+  // ---- Balance at Maturity ----
   let Bal = 0;
   if (r === 0) {
     Bal = Math.max(0, P - A * N_term);
   } else {
-    const growth = Math.pow(1 + r, N_term);
-    Bal = Math.max(0, P * growth - A * ((growth - 1) / r));
+    const g = Math.pow(1 + r, N_term);
+    Bal = Math.max(0, P * g - A * ((g - 1) / r));
   }
 
-  // ---- Interest to term (Adobe method) ----
+  // ---- Interest to Term ----
   const totalPaid = A * N_term;
   const principalRepaid = Math.max(0, P - Bal);
-  const interestToTerm = Math.max(0, totalPaid - principalRepaid);
+  const interestToTerm  = Math.max(0, totalPaid - principalRepaid);
 
-  // ---- Fee Logic ----
-  const feeLogic = [
-    { field: "Title_Insurance",        cb: "Check Box33", include: true },
-    { field: "Appraisal_AVM_Fees",     cb: "Check Box36", include: true },
-    { field: "Borrowers_Lawyer_Fees",  cb: "Check Box35", include: false },
-    { field: "Lenders_Lawyer_Fees",    cb: "Check Box32", include: true },
-    { field: "Brokerage_Fee",          cb: "Check Box31", include: true },
-    { field: "Lender_Fees",            cb: "Check Box29", include: true },
-    { field: "Other_Fees",             cb: "Check Box34", include: true }
+  // ---- Fee Definitions (confirmed order: 28→34 and 35→41) ----
+  const feeDefs = [
+    { field: "Title_Insurance",       ded: "Check Box28", apr: "Check Box35", aprInclude: true },
+    { field: "Appraisal_AVM_Fees",    ded: "Check Box29", apr: "Check Box36", aprInclude: true },
+    { field: "Borrowers_Lawyer_Fees", ded: "Check Box30", apr: "Check Box37", aprInclude: false },
+    { field: "Lenders_Lawyer_Fees",   ded: "Check Box31", apr: "Check Box38", aprInclude: true },
+    { field: "Brokerage_Fee",         ded: "Check Box32", apr: "Check Box39", aprInclude: true },
+    { field: "Lender_Fees",           ded: "Check Box33", apr: "Check Box40", aprInclude: true },
+    { field: "Other_Fees",            ded: "Check Box34", apr: "Check Box41", aprInclude: true }
   ];
 
   let totalFees = 0;
   const checkboxStates = {};
 
-  for (const { field, cb, include } of feeLogic) {
-    const val = nnum(record[field]);
+  for (const f of feeDefs) {
+    const val = nnum(record[f.field]);
     const hasVal = val > 0;
-    checkboxStates[cb] = (hasVal && include);
-    if (include && hasVal) totalFees += val;
+
+    checkboxStates[f.ded] = hasVal;                   // Deduct from principal
+    checkboxStates[f.apr] = hasVal && f.aprInclude;   // Include in APR
+
+    if (hasVal && f.aprInclude) totalFees += val;
   }
 
-  // ---- Total COB ----
-  const totalCOB = interestToTerm + totalFees;
-
-  // ---- APR Calculation (Acrobat-equivalent IRR solver) ----
-  // Cashflows: today = +P, each payment = -A, final = +(-Bal), include fees in CF0
-  const CF0 = P - totalFees;   // Fees reduce the net advance
+  // ---- APR via IRR ----
+  const CF0 = P - totalFees;
   const n = N_term;
 
-  function aprIrrSolve() {
+  function solveAPR() {
     if (n === 0) return nomPct;
 
-    // Solve internal rate per period
     let low = 0, high = 1, guess = 0.05;
 
     const f = (rate) => {
@@ -327,30 +319,29 @@ function computeCOB(record) {
       return sum;
     };
 
-    // Expand high bound
     while (f(high) < 0) high *= 2;
-    while (f(low) > 0) low /= 2;
+    while (f(low) > 0) low  /= 2;
 
-    for (let it = 0; it < 50; it++) {
+    for (let i = 0; i < 50; i++) {
       guess = (low + high) / 2;
       const val = f(guess);
       if (Math.abs(val) < 1e-9) break;
       if (val > 0) low = guess; else high = guess;
     }
 
-    // Annualize
     const effAnnual = Math.pow(1 + guess, periodsPerYear) - 1;
     return effAnnual * 100;
   }
 
-  let APR = aprIrrSolve();
+  let APR = solveAPR();
+  const contract = nomPct;
 
-  // ---- Final Guard Rails ----
-  const contract = nnum(nomPct);
   if (APR < contract) APR = contract;
   if (totalFees > 0 && APR <= contract) APR = contract + 0.01;
 
-  // ---- Format outputs ----
+  const totalCOB = interestToTerm + totalFees;
+
+  // ---- FINAL OUTPUT ----
   return {
     ...checkboxStates,
     "Mtg_Pmt_Amount":         money(A),
@@ -358,11 +349,10 @@ function computeCOB(record) {
     "Total_Interest_To_Term": money(interestToTerm),
     "Total_Fees_Calc":        money(totalFees),
     "Total_COB_Calc":         money(totalCOB),
-    
-    // 2 decimal APR
     "APR_Calc":               APR.toFixed(2)
   };
 }
+
 //////////////////////////
 // PDF FILLING + MERGING
 //////////////////////////
@@ -404,7 +394,10 @@ async function fillTemplateBytes(templatePath, record, map, preloadedBytes) {
       const field = form.getField(pdfField);
       const type = field.constructor.name;
       if (type === "PDFCheckBox") {
-        /^(yes|true|1|x)$/i.test(String(val)) ? field.check() : field.uncheck(); // unchanged per your choice
+  const shouldCheck = /^(yes|true|1|x)$/i.test(String(val));
+  if (shouldCheck) field.check();
+  else             field.uncheck();
+}
       } else if (type === "PDFDropdown") {
         try { field.select(v); } catch { field.setText(v); }
       } else if (type === "PDFRadioGroup") {
@@ -461,7 +454,11 @@ async function makeHeaderPageBytes(headersPdfPath, headerIndex1Based) {
 async function addTemplateToMerge(relPath, record, fieldMap, bucket, preloadedBytes) {
   const fullPath = `${TEMPL_BASE}${relPath}`;
   try {
-    const rec2 = /COB/i.test(relPath) ? { ...record, ...computeCOB(record) } : record;
+    const isCOB = /COB/i.test(relPath);
+    const rec2 = isCOB
+      ? { ...record, ...computeCOB(record) }
+      : record;
+
     const filled = await fillTemplateBytes(fullPath, rec2, fieldMap, preloadedBytes);
     bucket.push(filled);
   } catch (err) {
@@ -470,6 +467,7 @@ async function addTemplateToMerge(relPath, record, fieldMap, bucket, preloadedBy
     bucket.push(bytes);
   }
 }
+
 
 //////////////////////////
 // ZIP + INFO COVER
