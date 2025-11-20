@@ -239,45 +239,51 @@ function balanceAfter(P, nomPct, comp, freq, amortMonths, paidMonths, payAmount)
 //////////////////////////
 // COB CALCULATIONS
 //////////////////////////
-function computeCOB(record){
-  console.log("COB INPUTS", {
-    P: record.Total_Mortgage_Amount_incl_Insurance,
-    Mortgage_Amount: record["Mortgage Amount"],
-    nomPct: record.Current_Rate || record.Mortgage_Rate,
-    comp: record.Compounding,
-    freq: record.Payment_Frequency || record.Mtg_Pmt_Freq,
-    termYears: record.Term_Years,
-    termMonths: record.Term_Months,
-    amortMonths: record.Mtg_Amortization,
-    amortYears: record.Amortization_Years,
-    amortMonthsAlt: record.Amortization_Months,
-    payment: record.Payment_Amount || record.Mtg_Pmt_Amount
-  });
-
+function computeCOB(record) {
+  // ---- Extract Inputs ----
   const P        = nnum(record.Total_Mortgage_Amount_incl_Insurance || record["Mortgage Amount"]);
   const nomPct   = nnum(record.Current_Rate || record.Mortgage_Rate);
-  const comp     = record.Compounding || "Semi-Annual";
-  const freq     = record.Payment_Frequency || record.Mtg_Pmt_Freq || "Monthly";
-  // Always months from Zoho (even if API names say "Years")
-  const termM  = nnum(record.Term_Years || record.Term_Months || 0);
-  const amortM = nnum(
+  const comp     = (record.Compounding || "Semi-Annual").trim();
+  const freq     = (record.Payment_Frequency || record.Mtg_Pmt_Freq || "Monthly").trim();
+
+  // Terms always in months from Zoho
+  const termM    = nnum(record.Term_Months || record.Term_Years || 0);
+  const amortM   = nnum(
     record.Mtg_Amortization ||
     record.Amortization_Months ||
     record.Amortization_Years ||
     record.Amortization ||
     0
   );
+
+  // Payment amount—use provided OR calculate fresh
   const A_input  = record.Payment_Amount || record.Mtg_Pmt_Amount;
+  const A        = (A_input && nnum(A_input) > 0)
+    ? nnum(A_input)
+    : paymentFor(P, nomPct, comp, freq, amortM);
 
-  const A = (A_input && nnum(A_input)>0) ? nnum(A_input)
-        : paymentFor(P, nomPct, comp, freq, amortM);
+  // ---- Core Period Math ----
+  const periodsPerYear = ppy(freq);
+  const r = perPeriodRate(nomPct, comp, freq);   // effective rate per payment
 
-  const Bal = balanceAfter(P, nomPct, comp, freq, amortM, termM, A);
-  const termPayments = Math.round((termM/12) * ppy(freq));
-  const totalPaid = A * termPayments;
+  const N_amort = Math.round((amortM / 12) * periodsPerYear);
+  const N_term  = Math.round((termM  / 12) * periodsPerYear);
+
+  // ---- Balance at maturity (match Acrobat logic exactly) ----
+  let Bal = 0;
+  if (r === 0) {
+    Bal = Math.max(0, P - A * N_term);
+  } else {
+    const growth = Math.pow(1 + r, N_term);
+    Bal = Math.max(0, P * growth - A * ((growth - 1) / r));
+  }
+
+  // ---- Interest to term (Adobe method) ----
+  const totalPaid = A * N_term;
   const principalRepaid = Math.max(0, P - Bal);
   const interestToTerm = Math.max(0, totalPaid - principalRepaid);
 
+  // ---- Fee Logic ----
   const feeLogic = [
     { field: "Title_Insurance",        cb: "Check Box33", include: true },
     { field: "Appraisal_AVM_Fees",     cb: "Check Box36", include: true },
@@ -288,29 +294,63 @@ function computeCOB(record){
     { field: "Other_Fees",             cb: "Check Box34", include: true }
   ];
 
-  let feesIncluded = 0;
+  let totalFees = 0;
   const checkboxStates = {};
+
   for (const { field, cb, include } of feeLogic) {
     const val = nnum(record[field]);
-    const hasValue = val > 0;
-    checkboxStates[cb] = hasValue && include;
-    if (include && hasValue) feesIncluded += val;
+    const hasVal = val > 0;
+    checkboxStates[cb] = (hasVal && include);
+    if (include && hasVal) totalFees += val;
   }
 
-  const totalFees = feesIncluded;
-  const totalCOB  = interestToTerm + totalFees;
-  const termYears = nnum(termM)/12 || 1;
-  const avgPrincipal = (P + Bal) / 2 || P;
-  const APR = (avgPrincipal > 0)
-    ? 100 * (totalCOB / (termYears * avgPrincipal))
-    : 0;
+  // ---- Total COB ----
+  const totalCOB = interestToTerm + totalFees;
 
-  // Guard rails: never below contract; bump by 0.01 if fees exist and rounding hits contract
-  let aprNum = Math.round(APR * 100) / 100;
+  // ---- APR Calculation (Acrobat-equivalent IRR solver) ----
+  // Cashflows: today = +P, each payment = -A, final = +(-Bal), include fees in CF0
+  const CF0 = P - totalFees;   // Fees reduce the net advance
+  const n = N_term;
+
+  function aprIrrSolve() {
+    if (n === 0) return nomPct;
+
+    // Solve internal rate per period
+    let low = 0, high = 1, guess = 0.05;
+
+    const f = (rate) => {
+      let sum = CF0;
+      for (let i = 1; i <= n; i++) {
+        sum -= A / Math.pow(1 + rate, i);
+      }
+      sum -= Bal / Math.pow(1 + rate, n);
+      return sum;
+    };
+
+    // Expand high bound
+    while (f(high) < 0) high *= 2;
+    while (f(low) > 0) low /= 2;
+
+    for (let it = 0; it < 50; it++) {
+      guess = (low + high) / 2;
+      const val = f(guess);
+      if (Math.abs(val) < 1e-9) break;
+      if (val > 0) low = guess; else high = guess;
+    }
+
+    // Annualize
+    const effAnnual = Math.pow(1 + guess, periodsPerYear) - 1;
+    return effAnnual * 100;
+  }
+
+  let APR = aprIrrSolve();
+
+  // ---- Final Guard Rails ----
   const contract = nnum(nomPct);
-  if (aprNum < contract) aprNum = contract;
-  if (totalFees > 0 && aprNum <= contract) aprNum = contract + 0.01;
+  if (APR < contract) APR = contract;
+  if (totalFees > 0 && APR <= contract) APR = contract + 0.01;
 
+  // ---- Format outputs ----
   return {
     ...checkboxStates,
     "Mtg_Pmt_Amount":         money(A),
@@ -318,10 +358,11 @@ function computeCOB(record){
     "Total_Interest_To_Term": money(interestToTerm),
     "Total_Fees_Calc":        money(totalFees),
     "Total_COB_Calc":         money(totalCOB),
-    "APR_Calc":               aprNum.toFixed(2)
+    
+    // 2 decimal APR
+    "APR_Calc":               APR.toFixed(2)
   };
 }
-
 //////////////////////////
 // PDF FILLING + MERGING
 //////////////////////////
