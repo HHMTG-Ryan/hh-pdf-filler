@@ -565,7 +565,7 @@ async function makeInfoCoverPdf(record, mapDefault) {
 
       const lenderPrefix = els.lender.value;
       const pkgType = (els.pkg.value || "Standard").toLowerCase();
-      const headersPath = `${TEMPL_BASE}Headers-Signing-Package.pdf`;
+      const headersPath = `${TEMPL_BASE}Headers_Signing_Package.pdf`;
 
       // Verify headers exist now (faster fail)
       const headersProbe = await tryFetchPdfBytes(headersPath);
