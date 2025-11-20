@@ -397,14 +397,14 @@ async function fillTemplateBytes(templatePath, record, map, preloadedBytes) {
   const shouldCheck = /^(yes|true|1|x)$/i.test(String(val));
   if (shouldCheck) field.check();
   else             field.uncheck();
+} else if (type === "PDFDropdown") {
+  try { field.select(v); }
+  catch { field.setText(v); }
+} else if (type === "PDFRadioGroup") {
+  try { field.select(v); } catch {}
+} else if (field.setText) {
+  field.setText(v);
 }
-      } else if (type === "PDFDropdown") {
-        try { field.select(v); } catch { field.setText(v); }
-      } else if (type === "PDFRadioGroup") {
-        try { field.select(v); } catch {}
-      } else if (field.setText) {
-        field.setText(v);
-      }
       hits++;
     } catch (e) {
       misses++;
