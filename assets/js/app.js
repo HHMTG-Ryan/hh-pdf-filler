@@ -1,4 +1,4 @@
-/* HH Signing Package Builder – app.js (repo-aware paths, global mapping)
+ * HH Signing Package Builder – app.js (repo-aware paths, global mapping)
  * Repo layout expected:
  *   /config/standard_pkg.json, /config/map.json
  *   /data/templates/*.pdf  (lender docs, headers_signing_package.pdf, etc.)
@@ -239,6 +239,22 @@ function balanceAfter(P, nomPct, comp, freq, amortMonths, paidMonths, payAmount)
 //////////////////////////
 // COB CALCULATIONS
 //////////////////////////
+
+function computeCOB(record){
+  console.log("COB INPUTS", {
+    P: record.Total_Mortgage_Amount_incl_Insurance,
+    Mortgage_Amount: record["Mortgage Amount"],
+    nomPct: record.Current_Rate || record.Mortgage_Rate,
+    comp: record.Compounding,
+    freq: record.Payment_Frequency || record.Mtg_Pmt_Freq,
+    termYears: record.Term_Years,
+    termMonths: record.Term_Months,
+    amortMonths: record.Mtg_Amortization,
+    amortYears: record.Amortization_Years,
+    amortMonthsAlt: record.Amortization_Months,
+    payment: record.Payment_Amount || record.Mtg_Pmt_Amount
+  });
+  
 function computeCOB(record){
   const P        = nnum(record.Total_Mortgage_Amount_incl_Insurance || record["Mortgage Amount"]);
   const nomPct   = nnum(record.Current_Rate || record.Mortgage_Rate);
