@@ -1,4 +1,4 @@
-/ * HH Signing Package Builder – app.js (repo-aware paths, global mapping)
+/* HH Signing Package Builder – app.js (repo-aware paths, global mapping)
  * Repo layout expected:
  *   /config/standard_pkg.json, /config/map.json
  *   /data/templates/*.pdf  (lender docs, headers_signing_package.pdf, etc.)
