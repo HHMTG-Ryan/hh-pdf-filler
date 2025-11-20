@@ -10,6 +10,7 @@
     "Contact_Phone_2": "A2 Phone",
     "Appraisal_AVM_Fees": "AppraisalAVM_Fees",
     "Finders_Fee_BPS_NEW": "Basic BPS",
+    "Finders_Fee": "Mortgage_Basic_Comp",
     "Borrowers_Lawyer_Fees": "Borrower_Lawyer",
     "Brokerage_Fee": "Broker_Fee",
     "Split_to_Broker": "Broker_Split",
@@ -45,6 +46,6 @@
     "Term_Years": "Term_Months",
     "Title_Insurance": "Title_Insurance",
     "Volume_Bonus_BPS_NEW": "Volume BPS",
-    "Volume_Bonus": "Volume_Bonus_Comp"
+    "Volume_Bonus": "Mortgage_Volume_Comp"
   }
 }
