@@ -65,6 +65,15 @@ const HEADER_INDEX = {
   APPLICATION: 6
 };
 
+// PDFs that should NOT be flattened after filling (WMB template)
+const NO_FLATTEN_RELPATHS = [
+  "WMB_Template.pdf"   // ← change this if your WMB template filename is different
+];
+
+function shouldSkipFlatten(relPath) {
+  return NO_FLATTEN_RELPATHS.some(name => relPath.endsWith(name));
+}
+
 const DEBUG_FILL = false;
 function dbg(...a){ if (DEBUG_FILL) console.log(...a); }
 function dwarn(...a){ if (DEBUG_FILL) console.warn(...a); }
@@ -277,17 +286,18 @@ function computeCOB(record) {
   const principalRepaid = Math.max(0, P - Bal);
   const interestToTerm  = Math.max(0, totalPaid - principalRepaid);
 
-  // ---- Fee Definitions (28→34 deduct, 35→41 APR) ----
-  // Rule: include in APR and deduct from proceeds any time the fee > 0
-  // EXCEPT Borrowers_Lawyer_Fees: never deduct, never include in APR.
+  // ---- Fee Definitions (28–34 = deduct, 35–41 = APR)
+  // Rule:
+  //  - Include in APR if fee > 0, EXCEPT Borrowers_Lawyer_Fees (never in APR).
+  //  - Deduct from proceeds using same logic: all >0 except Borrowers_Lawyer_Fees.
   const feeDefs = [
-    { field: "Title_Insurance",       ded: "Check Box28", apr: "Check Box35", aprInclude: true,  dedInclude: true  },
-    { field: "Appraisal_AVM_Fees",    ded: "Check Box29", apr: "Check Box36", aprInclude: true,  dedInclude: true  },
-    { field: "Borrowers_Lawyer_Fees", ded: "Check Box30", apr: "Check Box37", aprInclude: false, dedInclude: false },
-    { field: "Lenders_Lawyer_Fees",   ded: "Check Box31", apr: "Check Box38", aprInclude: true,  dedInclude: true  },
-    { field: "Brokerage_Fee",         ded: "Check Box32", apr: "Check Box39", aprInclude: true,  dedInclude: true  },
-    { field: "Lender_Fees",           ded: "Check Box33", apr: "Check Box40", aprInclude: true,  dedInclude: true  },
-    { field: "Other_Fees",            ded: "Check Box34", apr: "Check Box41", aprInclude: true,  dedInclude: true  }
+    { field: "Title_Insurance",       ded: "Check Box28", apr: "Check Box35", includeApr: true,  includeDed: true  },
+    { field: "Appraisal_AVM_Fees",    ded: "Check Box29", apr: "Check Box36", includeApr: true,  includeDed: true  },
+    { field: "Borrowers_Lawyer_Fees", ded: "Check Box30", apr: "Check Box37", includeApr: false, includeDed: false },
+    { field: "Lenders_Lawyer_Fees",   ded: "Check Box31", apr: "Check Box38", includeApr: true,  includeDed: true  },
+    { field: "Brokerage_Fee",         ded: "Check Box32", apr: "Check Box39", includeApr: true,  includeDed: true  },
+    { field: "Lender_Fees",           ded: "Check Box33", apr: "Check Box40", includeApr: true,  includeDed: true  },
+    { field: "Other_Fees",            ded: "Check Box34", apr: "Check Box41", includeApr: true,  includeDed: true  }
   ];
 
   let totalFees = 0;
@@ -297,16 +307,17 @@ function computeCOB(record) {
     const val = nnum(record[f.field]);
     const hasVal = val > 0;
 
-    // Deduct from proceeds: follow dedInclude flag
-    checkboxStates[f.ded] = hasVal && f.dedInclude;
+    // Deduct from proceeds
+    checkboxStates[f.ded] = hasVal && f.includeDed;
 
-    // Include in APR: follow aprInclude flag
-    checkboxStates[f.apr] = hasVal && f.aprInclude;
-
-    if (hasVal && f.aprInclude) totalFees += val;
+    // Include in APR
+    checkboxStates[f.apr] = hasVal && f.includeApr;
+    if (hasVal && f.includeApr) totalFees += val;
   }
 
-  // ---- APR via IRR ----
+  const totalCOB = interestToTerm + totalFees;
+
+  // ---- APR via IRR-style solver ----
   const CF0 = P - totalFees;
   const n = N_term;
 
@@ -325,7 +336,7 @@ function computeCOB(record) {
     };
 
     while (f(high) < 0) high *= 2;
-    while (f(low) > 0) low  /= 2;
+    while (f(low) > 0)  low  /= 2;
 
     for (let i = 0; i < 50; i++) {
       guess = (low + high) / 2;
@@ -343,8 +354,6 @@ function computeCOB(record) {
 
   if (APR < contract) APR = contract;
   if (totalFees > 0 && APR <= contract) APR = contract + 0.01;
-
-  const totalCOB = interestToTerm + totalFees;
 
   // ---- FINAL OUTPUT ----
   return {
@@ -377,7 +386,9 @@ async function fillTemplateBytes(templatePath, record, map, preloadedBytes) {
     throw new Error("Template appears flattened/XFA (no AcroForm fields).");
   }
 
-  const fieldNames = new Set(fields.map(f => { try { return f.getName(); } catch { return ""; } }).filter(Boolean));
+  const fieldNames = new Set(
+    fields.map(f => { try { return f.getName(); } catch { return ""; } }).filter(Boolean)
+  );
   dbg(`Template ${templatePath}: found ${fieldNames.size} form fields`);
 
   const usedMap = map && (map.__default || map) || {};
@@ -396,7 +407,6 @@ async function fillTemplateBytes(templatePath, record, map, preloadedBytes) {
     try {
       const field = form.getField(pdfField);
       const type = field.constructor.name;
-
       if (type === "PDFCheckBox") {
         const shouldCheck = /^(yes|true|1|x)$/i.test(String(val));
         if (shouldCheck) field.check();
@@ -434,13 +444,15 @@ async function flattenAllPages(bytes) {
   return await doc.save({ updateFieldAppearances: true });
 }
 
-// Now list is [{ bytes, skipFlatten }]
+// listOfItems = [{ bytes, skipFlatten }, ...]
 async function mergeDocsFlattened(listOfItems) {
   const out = await PDFLib.PDFDocument.create();
 
   for (const item of listOfItems) {
-    const { bytes, skipFlatten } = item || {};
+    if (!item) continue;
+    const { bytes, skipFlatten } = item;
     if (!bytes) continue;
+
     const srcBytes = skipFlatten ? bytes : await flattenAllPages(bytes);
     const src = await PDFLib.PDFDocument.load(srcBytes);
     const pages = await out.copyPages(src, src.getPageIndices());
@@ -467,12 +479,15 @@ async function addTemplateToMerge(relPath, record, fieldMap, bucket, preloadedBy
   try {
     const isCOB = /COB/i.test(relPath);
     const rec2 = isCOB ? { ...record, ...computeCOB(record) } : record;
+
     const filled = await fillTemplateBytes(fullPath, rec2, fieldMap, preloadedBytes);
-    bucket.push({ bytes: filled, skipFlatten: false });
+    const skipFlatten = shouldSkipFlatten(relPath);
+    bucket.push({ bytes: filled, skipFlatten });
   } catch (err) {
     dwarn(`Could not fill ${relPath}, using static version instead: ${err.message}`);
     const bytes = preloadedBytes || await fetchPdfBytes(fullPath);
-    bucket.push({ bytes, skipFlatten: false });
+    const skipFlatten = shouldSkipFlatten(relPath);
+    bucket.push({ bytes, skipFlatten });
   }
 }
 
@@ -489,7 +504,7 @@ async function downloadZip(namedBytes) {
   document.body.appendChild(a); a.click(); a.remove();
 }
 
-// Info Cover Page (unchanged display re: months per your choice)
+// Info Cover Page
 async function makeInfoCoverPdf(record, mapDefault) {
   const { PDFDocument, StandardFonts, rgb } = PDFLib;
 
@@ -580,7 +595,6 @@ async function makeInfoCoverPdf(record, mapDefault) {
 // MAIN
 //////////////////////////
 (async function run() {
-  // Startup guards
   if (!window.PDFLib) { setStatus("PDFLib not loaded. Include pdf-lib before app.js.", "err"); throw new Error("PDFLib missing"); }
   if (!window.JSZip)  { setStatus("JSZip not loaded. Include jszip before app.js.", "err");  throw new Error("JSZip missing"); }
 
@@ -588,7 +602,7 @@ async function makeInfoCoverPdf(record, mapDefault) {
   let record = readFromQuery() || readFromWindowName();
   if (!record && els.manualJson?.value?.trim()) record = tryJSON(els.manualJson.value.trim());
 
-  // default First_Payment_Date text ONLY if payload missing
+  // Default First_Payment_Date text ONLY if payload missing
   if (record && isBlank(record.First_Payment_Date)) {
     record.First_Payment_Date = "See Lender Commitment";
   }
@@ -597,16 +611,13 @@ async function makeInfoCoverPdf(record, mapDefault) {
   const sequence = Array.isArray(manifest.sequence) ? manifest.sequence : [];
   const prosprFallback = manifest.prospr_fallback || "PROSPR.pdf";
 
-  // Map (normalized above); also allow local override for Singles
   let fieldMap = {};
   try {
     const rawMap = await fetchJson(`${CONFIG_BASE}map.json`);
     fieldMap = rawMap && typeof rawMap === "object"
       ? (rawMap.__default ? rawMap : { __default: rawMap })
       : { __default: {} };
-  } catch {
-    fieldMap = { __default: {} };
-  }
+  } catch { fieldMap = { __default: {} }; }
 
   const detected = inferLenderPrefix(record?.Lender_Name || "");
   populateLenderOptions(detected || "TD");
@@ -634,19 +645,16 @@ async function makeInfoCoverPdf(record, mapDefault) {
       const upApplicationBytes = await els.upApplication.files[0].arrayBuffer();
       const upMPPBytes = els.upMPP?.files[0] ? await els.upMPP.files[0].arrayBuffer() : null;
       const upAPABytes = els.upAPA?.files[0] ? await els.upAPA.files[0].arrayBuffer() : null;
-
       const toMerge = [];
 
       async function pushHeader(key) {
         const idx = HEADER_INDEX[key];
         if (!idx) return;
         const bytes = await makeHeaderPageBytes(headersPath, idx);
-        const skipFlatten = key === "WMB"; // WMB header should NOT be flattened
-        toMerge.push({ bytes, skipFlatten });
+        toMerge.push({ bytes, skipFlatten: false }); // headers always flattened
       }
-      async function pushBytes(bytes, options = {}) {
-        const { skipFlatten = false } = options;
-        toMerge.push({ bytes, skipFlatten });
+      async function pushBytes(bytes) {
+        toMerge.push({ bytes, skipFlatten: false }); // uploads flattened
       }
 
       for (const s of sequence) {
