@@ -251,8 +251,7 @@ function computeCOB(record) {
     record.Mtg_Amortization ||
     record.Amortization_Months ||
     record.Amortization_Years ||
-    record.Amortization ||
-    0
+    record.Amortization
   );
 
   const A_input = record.Payment_Amount || record.Mtg_Pmt_Amount;
@@ -278,15 +277,17 @@ function computeCOB(record) {
   const principalRepaid = Math.max(0, P - Bal);
   const interestToTerm  = Math.max(0, totalPaid - principalRepaid);
 
-  // ---- Fee Definitions (28–34 deduct, 35–41 APR; Borrower’s lawyer = never) ----
+  // ---- Fee Definitions (28→34 deduct, 35→41 APR) ----
+  // Rule: include in APR and deduct from proceeds any time the fee > 0
+  // EXCEPT Borrowers_Lawyer_Fees: never deduct, never include in APR.
   const feeDefs = [
-    { field: "Title_Insurance",       ded: "Check Box28", apr: "Check Box35", dedInclude: true,  aprInclude: true  },
-    { field: "Appraisal_AVM_Fees",    ded: "Check Box29", apr: "Check Box36", dedInclude: true,  aprInclude: true  },
-    { field: "Borrowers_Lawyer_Fees", ded: "Check Box30", apr: "Check Box37", dedInclude: false, aprInclude: false }, // never tick
-    { field: "Lenders_Lawyer_Fees",   ded: "Check Box31", apr: "Check Box38", dedInclude: true,  aprInclude: true  },
-    { field: "Brokerage_Fee",         ded: "Check Box32", apr: "Check Box39", dedInclude: true,  aprInclude: true  },
-    { field: "Lender_Fees",           ded: "Check Box33", apr: "Check Box40", dedInclude: true,  aprInclude: true  },
-    { field: "Other_Fees",            ded: "Check Box34", apr: "Check Box41", dedInclude: true,  aprInclude: true  }
+    { field: "Title_Insurance",       ded: "Check Box28", apr: "Check Box35", aprInclude: true,  dedInclude: true  },
+    { field: "Appraisal_AVM_Fees",    ded: "Check Box29", apr: "Check Box36", aprInclude: true,  dedInclude: true  },
+    { field: "Borrowers_Lawyer_Fees", ded: "Check Box30", apr: "Check Box37", aprInclude: false, dedInclude: false },
+    { field: "Lenders_Lawyer_Fees",   ded: "Check Box31", apr: "Check Box38", aprInclude: true,  dedInclude: true  },
+    { field: "Brokerage_Fee",         ded: "Check Box32", apr: "Check Box39", aprInclude: true,  dedInclude: true  },
+    { field: "Lender_Fees",           ded: "Check Box33", apr: "Check Box40", aprInclude: true,  dedInclude: true  },
+    { field: "Other_Fees",            ded: "Check Box34", apr: "Check Box41", aprInclude: true,  dedInclude: true  }
   ];
 
   let totalFees = 0;
@@ -296,20 +297,16 @@ function computeCOB(record) {
     const val = nnum(record[f.field]);
     const hasVal = val > 0;
 
-    // Deduct from proceeds
+    // Deduct from proceeds: follow dedInclude flag
     checkboxStates[f.ded] = hasVal && f.dedInclude;
 
-    // Include in APR
+    // Include in APR: follow aprInclude flag
     checkboxStates[f.apr] = hasVal && f.aprInclude;
 
-    // Only fees marked aprInclude affect APR/COB fee bucket
     if (hasVal && f.aprInclude) totalFees += val;
   }
 
-  const totalCOB = interestToTerm + totalFees;
-
   // ---- APR via IRR ----
-  // CF0 = P - totalFees (net advance); then A each period; Bal outstanding at maturity
   const CF0 = P - totalFees;
   const n = N_term;
 
@@ -347,6 +344,8 @@ function computeCOB(record) {
   if (APR < contract) APR = contract;
   if (totalFees > 0 && APR <= contract) APR = contract + 0.01;
 
+  const totalCOB = interestToTerm + totalFees;
+
   // ---- FINAL OUTPUT ----
   return {
     ...checkboxStates,
@@ -378,11 +377,7 @@ async function fillTemplateBytes(templatePath, record, map, preloadedBytes) {
     throw new Error("Template appears flattened/XFA (no AcroForm fields).");
   }
 
-  const fieldNames = new Set(
-    fields.map(f => {
-      try { return f.getName(); } catch { return ""; }
-    }).filter(Boolean)
-  );
+  const fieldNames = new Set(fields.map(f => { try { return f.getName(); } catch { return ""; } }).filter(Boolean));
   dbg(`Template ${templatePath}: found ${fieldNames.size} form fields`);
 
   const usedMap = map && (map.__default || map) || {};
@@ -396,7 +391,6 @@ async function fillTemplateBytes(templatePath, record, map, preloadedBytes) {
     const val = (hasKey ? record[keyStr] : undefined) ??
                 (hasLeaf ? record[leaf] : undefined) ?? "";
     const v = normalize(val);
-
     if (!fieldNames.has(pdfField)) { misses++; continue; }
 
     try {
@@ -404,7 +398,6 @@ async function fillTemplateBytes(templatePath, record, map, preloadedBytes) {
       const type = field.constructor.name;
 
       if (type === "PDFCheckBox") {
-        // Standard checkbox logic – COB-specific overrides are handled via computeCOB values/mapping
         const shouldCheck = /^(yes|true|1|x)$/i.test(String(val));
         if (shouldCheck) field.check();
         else             field.uncheck();
@@ -432,22 +425,28 @@ async function fillTemplateBytes(templatePath, record, map, preloadedBytes) {
   return await pdfDoc.save({ updateFieldAppearances: false });
 }
 
-// temporarily unused
 async function flattenAllPages(bytes) {
-  return bytes;
+  const doc = await PDFLib.PDFDocument.load(bytes);
+  try {
+    const form = doc.getForm();
+    form && form.flatten();
+  } catch {}
+  return await doc.save({ updateFieldAppearances: true });
 }
 
-async function mergeDocsFlattened(listOfBytes) {
+// Now list is [{ bytes, skipFlatten }]
+async function mergeDocsFlattened(listOfItems) {
   const out = await PDFLib.PDFDocument.create();
 
-  for (const b of listOfBytes) {
-    // Just load the bytes we already have (some may be filled by fillTemplateBytes)
-    const src = await PDFLib.PDFDocument.load(b);
+  for (const item of listOfItems) {
+    const { bytes, skipFlatten } = item || {};
+    if (!bytes) continue;
+    const srcBytes = skipFlatten ? bytes : await flattenAllPages(bytes);
+    const src = await PDFLib.PDFDocument.load(srcBytes);
     const pages = await out.copyPages(src, src.getPageIndices());
     pages.forEach(p => out.addPage(p));
   }
 
-  // Single save at the very end
   return await out.save({ updateFieldAppearances: true });
 }
 
@@ -467,16 +466,13 @@ async function addTemplateToMerge(relPath, record, fieldMap, bucket, preloadedBy
   const fullPath = `${TEMPL_BASE}${relPath}`;
   try {
     const isCOB = /COB/i.test(relPath);
-    const rec2 = isCOB
-      ? { ...record, ...computeCOB(record) }   // inject COB + checkbox values
-      : record;
-
+    const rec2 = isCOB ? { ...record, ...computeCOB(record) } : record;
     const filled = await fillTemplateBytes(fullPath, rec2, fieldMap, preloadedBytes);
-    bucket.push(filled);
+    bucket.push({ bytes: filled, skipFlatten: false });
   } catch (err) {
     dwarn(`Could not fill ${relPath}, using static version instead: ${err.message}`);
     const bytes = preloadedBytes || await fetchPdfBytes(fullPath);
-    bucket.push(bytes);
+    bucket.push({ bytes, skipFlatten: false });
   }
 }
 
@@ -592,12 +588,11 @@ async function makeInfoCoverPdf(record, mapDefault) {
   let record = readFromQuery() || readFromWindowName();
   if (!record && els.manualJson?.value?.trim()) record = tryJSON(els.manualJson.value.trim());
 
-  // Default First_Payment_Date text ONLY if payload missing
+  // default First_Payment_Date text ONLY if payload missing
   if (record && isBlank(record.First_Payment_Date)) {
     record.First_Payment_Date = "See Lender Commitment";
   }
 
-  // Manifest (safe defaults/guards)
   const manifest = await fetchJson(`${CONFIG_BASE}standard_pkg.json`);
   const sequence = Array.isArray(manifest.sequence) ? manifest.sequence : [];
   const prosprFallback = manifest.prospr_fallback || "PROSPR.pdf";
@@ -632,7 +627,6 @@ async function makeInfoCoverPdf(record, mapDefault) {
       const pkgType = (els.pkg.value || "Standard").toLowerCase();
       const headersPath = `${TEMPL_BASE}Headers_Signing_Package.pdf`;
 
-      // Verify headers exist now (faster fail)
       const headersProbe = await tryFetchPdfBytes(headersPath);
       if (!headersProbe) throw new Error(`Missing required header file: ${headersPath}`);
 
@@ -640,14 +634,20 @@ async function makeInfoCoverPdf(record, mapDefault) {
       const upApplicationBytes = await els.upApplication.files[0].arrayBuffer();
       const upMPPBytes = els.upMPP?.files[0] ? await els.upMPP.files[0].arrayBuffer() : null;
       const upAPABytes = els.upAPA?.files[0] ? await els.upAPA.files[0].arrayBuffer() : null;
+
       const toMerge = [];
 
       async function pushHeader(key) {
         const idx = HEADER_INDEX[key];
         if (!idx) return;
-        toMerge.push(await makeHeaderPageBytes(headersPath, idx));
+        const bytes = await makeHeaderPageBytes(headersPath, idx);
+        const skipFlatten = key === "WMB"; // WMB header should NOT be flattened
+        toMerge.push({ bytes, skipFlatten });
       }
-      async function pushBytes(bytes) { toMerge.push(bytes); }
+      async function pushBytes(bytes, options = {}) {
+        const { skipFlatten = false } = options;
+        toMerge.push({ bytes, skipFlatten });
+      }
 
       for (const s of sequence) {
         const spec = s && typeof s === "object" ? s : {};
@@ -665,7 +665,10 @@ async function makeInfoCoverPdf(record, mapDefault) {
         }
         if (spec.doc === "UPLOAD_Commitment.pdf") { await pushBytes(upCommitmentBytes); continue; }
         if (spec.doc === "UPLOAD_Application.pdf") { await pushBytes(upApplicationBytes); continue; }
-        if (spec.doc === "UPLOAD_APA_TD.pdf") { if (isTD(lenderPrefix) && upAPABytes) await pushBytes(upAPABytes); continue; }
+        if (spec.doc === "UPLOAD_APA_TD.pdf") {
+          if (isTD(lenderPrefix) && upAPABytes) await pushBytes(upAPABytes);
+          continue;
+        }
 
         if (spec.doc && spec.doc.startsWith("LENDER_")) {
           const suffix = spec.doc.replace(/^LENDER_/, "");
@@ -769,7 +772,7 @@ async function makeInfoCoverPdf(record, mapDefault) {
       const blob = await makeInfoCoverPdf(rec, MAP.__default);
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = `HH_Data_Snapshot_${rec?.Lender_Name || "Lender"}_${Date.now()}.pdf`;
+      a.download = `HH_Data_Snapshot_${rec?.Lender_Name || 'Lender'}_${Date.now()}.pdf`;
       document.body.appendChild(a); a.click(); a.remove();
       setStatus("Info cover page downloaded.", "ok");
     } catch (e) {
