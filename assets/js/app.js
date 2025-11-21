@@ -432,20 +432,22 @@ async function fillTemplateBytes(templatePath, record, map, preloadedBytes) {
   return await pdfDoc.save({ updateFieldAppearances: false });
 }
 
+// temporarily unused
 async function flattenAllPages(bytes) {
-  const doc = await PDFLib.PDFDocument.load(bytes);
-  try { const form = doc.getForm(); form && form.flatten(); } catch {}
-  return await doc.save({ updateFieldAppearances: true });
+  return bytes;
 }
 
 async function mergeDocsFlattened(listOfBytes) {
   const out = await PDFLib.PDFDocument.create();
+
   for (const b of listOfBytes) {
-    const flat = await flattenAllPages(b);
-    const src = await PDFLib.PDFDocument.load(flat);
+    // Just load the bytes we already have (some may be filled by fillTemplateBytes)
+    const src = await PDFLib.PDFDocument.load(b);
     const pages = await out.copyPages(src, src.getPageIndices());
     pages.forEach(p => out.addPage(p));
   }
+
+  // Single save at the very end
   return await out.save({ updateFieldAppearances: true });
 }
 
