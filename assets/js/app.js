@@ -251,7 +251,8 @@ function computeCOB(record) {
     record.Mtg_Amortization ||
     record.Amortization_Months ||
     record.Amortization_Years ||
-    record.Amortization
+    record.Amortization ||
+    0
   );
 
   const A_input = record.Payment_Amount || record.Mtg_Pmt_Amount;
@@ -277,15 +278,15 @@ function computeCOB(record) {
   const principalRepaid = Math.max(0, P - Bal);
   const interestToTerm  = Math.max(0, totalPaid - principalRepaid);
 
-  // ---- Fee Definitions (confirmed order: 28→34 and 35→41) ----
+  // ---- Fee Definitions (28–34 deduct, 35–41 APR; Borrower’s lawyer = never) ----
   const feeDefs = [
-    { field: "Title_Insurance",       ded: "Check Box28", apr: "Check Box35", aprInclude: true },
-    { field: "Appraisal_AVM_Fees",    ded: "Check Box29", apr: "Check Box36", aprInclude: true },
-    { field: "Borrowers_Lawyer_Fees", ded: "Check Box30", apr: "Check Box37", aprInclude: false },
-    { field: "Lenders_Lawyer_Fees",   ded: "Check Box31", apr: "Check Box38", aprInclude: true },
-    { field: "Brokerage_Fee",         ded: "Check Box32", apr: "Check Box39", aprInclude: true },
-    { field: "Lender_Fees",           ded: "Check Box33", apr: "Check Box40", aprInclude: true },
-    { field: "Other_Fees",            ded: "Check Box34", apr: "Check Box41", aprInclude: true }
+    { field: "Title_Insurance",       ded: "Check Box28", apr: "Check Box35", dedInclude: true,  aprInclude: true  },
+    { field: "Appraisal_AVM_Fees",    ded: "Check Box29", apr: "Check Box36", dedInclude: true,  aprInclude: true  },
+    { field: "Borrowers_Lawyer_Fees", ded: "Check Box30", apr: "Check Box37", dedInclude: false, aprInclude: false }, // never tick
+    { field: "Lenders_Lawyer_Fees",   ded: "Check Box31", apr: "Check Box38", dedInclude: true,  aprInclude: true  },
+    { field: "Brokerage_Fee",         ded: "Check Box32", apr: "Check Box39", dedInclude: true,  aprInclude: true  },
+    { field: "Lender_Fees",           ded: "Check Box33", apr: "Check Box40", dedInclude: true,  aprInclude: true  },
+    { field: "Other_Fees",            ded: "Check Box34", apr: "Check Box41", dedInclude: true,  aprInclude: true  }
   ];
 
   let totalFees = 0;
@@ -295,13 +296,20 @@ function computeCOB(record) {
     const val = nnum(record[f.field]);
     const hasVal = val > 0;
 
-    checkboxStates[f.ded] = hasVal;                   // Deduct from principal
-    checkboxStates[f.apr] = hasVal && f.aprInclude;   // Include in APR
+    // Deduct from proceeds
+    checkboxStates[f.ded] = hasVal && f.dedInclude;
 
+    // Include in APR
+    checkboxStates[f.apr] = hasVal && f.aprInclude;
+
+    // Only fees marked aprInclude affect APR/COB fee bucket
     if (hasVal && f.aprInclude) totalFees += val;
   }
 
+  const totalCOB = interestToTerm + totalFees;
+
   // ---- APR via IRR ----
+  // CF0 = P - totalFees (net advance); then A each period; Bal outstanding at maturity
   const CF0 = P - totalFees;
   const n = N_term;
 
@@ -339,8 +347,6 @@ function computeCOB(record) {
   if (APR < contract) APR = contract;
   if (totalFees > 0 && APR <= contract) APR = contract + 0.01;
 
-  const totalCOB = interestToTerm + totalFees;
-
   // ---- FINAL OUTPUT ----
   return {
     ...checkboxStates,
@@ -363,18 +369,20 @@ function normalize(v) {
 }
 
 async function fillTemplateBytes(templatePath, record, map, preloadedBytes) {
-  // existence check (Q2)
   const bytes = preloadedBytes || await fetchPdfBytes(templatePath);
   const pdfDoc = await PDFLib.PDFDocument.load(bytes);
   const form = pdfDoc.getForm?.();
   const fields = form?.getFields?.() || [];
 
-  // Q3: friendlier message + clean fallback
   if (!fields.length) {
     throw new Error("Template appears flattened/XFA (no AcroForm fields).");
   }
 
-  const fieldNames = new Set(fields.map(f => { try { return f.getName(); } catch { return ""; } }).filter(Boolean));
+  const fieldNames = new Set(
+    fields.map(f => {
+      try { return f.getName(); } catch { return ""; }
+    }).filter(Boolean)
+  );
   dbg(`Template ${templatePath}: found ${fieldNames.size} form fields`);
 
   const usedMap = map && (map.__default || map) || {};
@@ -388,23 +396,25 @@ async function fillTemplateBytes(templatePath, record, map, preloadedBytes) {
     const val = (hasKey ? record[keyStr] : undefined) ??
                 (hasLeaf ? record[leaf] : undefined) ?? "";
     const v = normalize(val);
+
     if (!fieldNames.has(pdfField)) { misses++; continue; }
 
     try {
       const field = form.getField(pdfField);
       const type = field.constructor.name;
+
       if (type === "PDFCheckBox") {
-  const shouldCheck = /^(yes|true|1|x)$/i.test(String(val));
-  if (shouldCheck) field.check();
-  else             field.uncheck();
-} else if (type === "PDFDropdown") {
-  try { field.select(v); }
-  catch { field.setText(v); }
-} else if (type === "PDFRadioGroup") {
-  try { field.select(v); } catch {}
-} else if (field.setText) {
-  field.setText(v);
-}
+        // Standard checkbox logic – COB-specific overrides are handled via computeCOB values/mapping
+        const shouldCheck = /^(yes|true|1|x)$/i.test(String(val));
+        if (shouldCheck) field.check();
+        else             field.uncheck();
+      } else if (type === "PDFDropdown") {
+        try { field.select(v); } catch { field.setText(v); }
+      } else if (type === "PDFRadioGroup") {
+        try { field.select(v); } catch {}
+      } else if (field.setText) {
+        field.setText(v);
+      }
       hits++;
     } catch (e) {
       misses++;
@@ -440,7 +450,7 @@ async function mergeDocsFlattened(listOfBytes) {
 }
 
 async function makeHeaderPageBytes(headersPdfPath, headerIndex1Based) {
-  const headersBytes = await fetchPdfBytes(headersPdfPath); // Q2 existence check happens here
+  const headersBytes = await fetchPdfBytes(headersPdfPath);
   const src = await PDFLib.PDFDocument.load(headersBytes);
   const out = await PDFLib.PDFDocument.create();
   const [page] = await out.copyPages(src, [headerIndex1Based - 1]);
@@ -456,7 +466,7 @@ async function addTemplateToMerge(relPath, record, fieldMap, bucket, preloadedBy
   try {
     const isCOB = /COB/i.test(relPath);
     const rec2 = isCOB
-      ? { ...record, ...computeCOB(record) }
+      ? { ...record, ...computeCOB(record) }   // inject COB + checkbox values
       : record;
 
     const filled = await fillTemplateBytes(fullPath, rec2, fieldMap, preloadedBytes);
@@ -467,7 +477,6 @@ async function addTemplateToMerge(relPath, record, fieldMap, bucket, preloadedBy
     bucket.push(bytes);
   }
 }
-
 
 //////////////////////////
 // ZIP + INFO COVER
@@ -494,7 +503,6 @@ async function makeInfoCoverPdf(record, mapDefault) {
   };
 
   const values = { ...record };
-  // (You chose not to alter months/years display here.)
 
   const rows = [];
   for (const [zohoKey, pdfField] of Object.entries(mapDefault || {})) {
@@ -582,7 +590,7 @@ async function makeInfoCoverPdf(record, mapDefault) {
   let record = readFromQuery() || readFromWindowName();
   if (!record && els.manualJson?.value?.trim()) record = tryJSON(els.manualJson.value.trim());
 
-  // NEW: default First_Payment_Date text ONLY if payload missing
+  // Default First_Payment_Date text ONLY if payload missing
   if (record && isBlank(record.First_Payment_Date)) {
     record.First_Payment_Date = "See Lender Commitment";
   }
@@ -599,7 +607,9 @@ async function makeInfoCoverPdf(record, mapDefault) {
     fieldMap = rawMap && typeof rawMap === "object"
       ? (rawMap.__default ? rawMap : { __default: rawMap })
       : { __default: {} };
-  } catch { fieldMap = { __default: {} }; }
+  } catch {
+    fieldMap = { __default: {} };
+  }
 
   const detected = inferLenderPrefix(record?.Lender_Name || "");
   populateLenderOptions(detected || "TD");
@@ -659,7 +669,7 @@ async function makeInfoCoverPdf(record, mapDefault) {
           const suffix = spec.doc.replace(/^LENDER_/, "");
           const rel = `${lenderFile(lenderPrefix, suffix)}`;
           const path = `${TEMPL_BASE}${rel}`;
-          const preload = await tryFetchPdfBytes(path); // probe and reuse
+          const preload = await tryFetchPdfBytes(path);
           if (!preload) {
             if (spec.optional) continue;
             throw new Error(`Missing required lender doc for ${lenderPrefix}: ${rel}`);
@@ -669,7 +679,6 @@ async function makeInfoCoverPdf(record, mapDefault) {
         }
 
         if (spec.doc) {
-          // normal template
           await addTemplateToMerge(spec.doc, record, fieldMap, toMerge);
         }
       }
@@ -677,7 +686,6 @@ async function makeInfoCoverPdf(record, mapDefault) {
       const merged = await mergeDocsFlattened(toMerge);
       const lastName = lastNameFromContact(record?.Contact_Name || "");
 
-      // File name: LastName - Signing Package - YYYYMMDD.pdf
       const d = new Date();
       const yyyy = d.getFullYear();
       const mm = String(d.getMonth()+1).padStart(2,"0");
@@ -705,9 +713,7 @@ async function makeInfoCoverPdf(record, mapDefault) {
       if (!record) throw new Error("No record payload. Paste JSON or relaunch from CRM.");
       setStatus("Generating editable singles...", "muted");
 
-      // Local map already normalized above
       const localMap = fieldMap;
-
       const lenderPrefix = els.lender.value;
       const singles = [];
 
@@ -761,7 +767,7 @@ async function makeInfoCoverPdf(record, mapDefault) {
       const blob = await makeInfoCoverPdf(rec, MAP.__default);
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = `HH_Data_Snapshot_${rec?.Lender_Name || 'Lender'}_${Date.now()}.pdf`;
+      a.download = `HH_Data_Snapshot_${rec?.Lender_Name || "Lender"}_${Date.now()}.pdf`;
       document.body.appendChild(a); a.click(); a.remove();
       setStatus("Info cover page downloaded.", "ok");
     } catch (e) {
